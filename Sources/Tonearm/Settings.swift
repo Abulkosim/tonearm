@@ -19,7 +19,9 @@ final class AppSettings: ObservableObject {
 
     static let titleLengthRange = 15...60
     static let titleLengthStep = 5
-    static let defaultTitleLength = 30
+    /// Short enough to stay visible beside the notch on MacBooks that have one. People who
+    /// changed the length keep theirs: it is stored, and only the fallback changed.
+    static let defaultTitleLength = 24
 
     private enum Key {
         static let menuBarStyle = "menuBarStyle"
