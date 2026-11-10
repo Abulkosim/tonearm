@@ -6,8 +6,8 @@
 #   CERT_P12       base64 of the .p12
 #   CERT_PASSWORD  its password
 #   CERT_IDENTITY  the certificate's common name, for example "Tonearm Self-Signed"
-#   TRUST_CERT     "true" for a self-signed certificate: marks it trusted for code
-#                  signing (needs sudo), so codesign and find-identity accept it.
+#   TRUST_CERT     "true" for a self-signed certificate: if codesign refuses it as
+#                  untrusted, marks it trusted for code signing (needs sudo).
 #   RUNNER_TEMP
 set -euo pipefail
 
@@ -33,19 +33,32 @@ while IFS= read -r line; do
 done < <(security list-keychains -d user)
 security list-keychains -d user -s "$keychain" "${existing[@]}"
 
-if [ "${TRUST_CERT:-false}" = true ]; then
-  # A self-signed certificate has no chain to Apple; without this codesign fails
-  # with CSSMERR_TP_NOT_TRUSTED. Admin trust settings need sudo; the authorization
-  # rule change lets sudo set them without a password dialog on the CI runner.
+# Signs a scratch copy of a binary with the identity; the real test of whether codesign accepts it.
+can_sign() {
+  local probe="$RUNNER_TEMP/tonearm-sign-probe"
+  cp /usr/bin/true "$probe"
+  local ok=0
+  codesign --force --sign "$CERT_IDENTITY" --keychain "$keychain" "$probe" 2> "$probe.log" || ok=1
+  rm -f "$probe"
+  return "$ok"
+}
+
+if [ "${TRUST_CERT:-false}" = true ] && ! can_sign; then
+  # A self-signed certificate has no chain to Apple, so codesign may refuse it
+  # (CSSMERR_TP_NOT_TRUSTED). Trust it for code signing: admin domain with sudo,
+  # then the user domain.
+  echo "codesign refused the untrusted certificate: $(cat "$RUNNER_TEMP/tonearm-sign-probe.log")"
   security find-certificate -c "$CERT_IDENTITY" -p "$keychain" > "$pem"
-  sudo security authorizationdb write com.apple.trust-settings.admin allow > /dev/null
-  sudo security add-trusted-cert -d -r trustRoot -p codeSign -p basic \
-    -k /Library/Keychains/System.keychain "$pem"
+  sudo security add-trusted-cert -d -r trustRoot -p codeSign -k "$keychain" "$pem" \
+    || security add-trusted-cert -r trustRoot -p codeSign -k "$keychain" "$pem" \
+    || true
 fi
 
-if ! security find-identity -v -p codesigning "$keychain" | grep -qF "\"$CERT_IDENTITY\""; then
-  echo "identity \"$CERT_IDENTITY\" not found or not valid in the imported certificate" >&2
+if ! can_sign; then
+  echo "codesign cannot use \"$CERT_IDENTITY\": $(cat "$RUNNER_TEMP/tonearm-sign-probe.log")" >&2
   security find-identity -p codesigning "$keychain" >&2
   exit 1
 fi
+rm -f "$RUNNER_TEMP/tonearm-sign-probe.log"
+security find-identity -p codesigning "$keychain"
 echo "imported signing identity"
