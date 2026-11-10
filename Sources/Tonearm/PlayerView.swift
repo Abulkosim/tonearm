@@ -135,7 +135,7 @@ struct PlayerView: View {
             StatusMessage(
                 symbol: "lock.fill",
                 title: "Tonearm needs permission",
-                detail: "Allow Tonearm to control Spotify in System Settings, under Privacy & Security, then Automation"
+                detail: "Allow Tonearm to control Spotify in System Settings, then try again"
             ) {
                 Button("Open Automation Settings", action: model.openAutomationSettings)
                     .buttonStyle(PillButtonStyle())
@@ -224,7 +224,7 @@ struct PlayerView: View {
                 HStack {
                     Text(PlayerTheme.time(shown))
                     Spacer()
-                    Text("-" + PlayerTheme.time(duration - shown))
+                    Text(duration > 0 ? "-" + PlayerTheme.time(duration - shown) : PlayerTheme.time(0))
                 }
                 .font(.system(size: 11).monospacedDigit())
                 .foregroundColor(PlayerTheme.textSecondary)

@@ -45,8 +45,8 @@ struct ArtworkBackground: View {
         if let colors {
             LinearGradient(
                 stops: [
-                    .init(color: colors.primary.opacity(0.85), location: 0),
-                    .init(color: colors.primary.opacity(0.35), location: 0.5),
+                    .init(color: colors.primary, location: 0),
+                    .init(color: colors.primary.opacity(0.5), location: 0.5),
                     .init(color: colors.primary.opacity(0), location: 0.95),
                 ],
                 startPoint: .top,
