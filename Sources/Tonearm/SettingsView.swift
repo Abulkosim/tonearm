@@ -7,6 +7,7 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var login = LaunchAtLogin.shared
+    @ObservedObject private var updater = Updater.shared
     /// macOS blocks Tonearm's notifications while "Notify on song change" is on.
     private let notificationsDenied: Bool
     private let openNotificationSettings: () -> Void
@@ -106,6 +107,14 @@ struct SettingsView: View {
             }
             .padding(.bottom, 4)
             .accessibilityElement(children: .combine)
+
+            divider
+
+            row("Check for updates automatically") {
+                GreenSwitch(isOn: $updater.automaticallyChecks, label: "Check for updates automatically")
+            }
+            actionRow("Check for Updates…") { updater.checkForUpdates() }
+                .disabled(!updater.canCheck)
 
             divider
 

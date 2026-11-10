@@ -1,7 +1,14 @@
 name: Release
 
-# Tag push vX.Y.Z: build, sign, notarize when secrets exist, package, attest and publish.
+# Tag push vX.Y.Z: build, sign, notarize when secrets exist, package, write the Sparkle
+# appcast, attest and publish.
 # workflow_dispatch and pull requests that touch release files: dry run that only uploads artifacts.
+#
+# Signing, first match wins (see docs/releasing.md):
+#   MACOS_CERT_P12 ...      Developer ID, notarized when notary secrets exist too
+#   SELF_SIGN_CERT_P12 ...  "Tonearm Self-Signed" certificate
+#   nothing                 ad-hoc
+# SPARKLE_ED_PRIVATE_KEY signs the update for the appcast. Without it a release has no appcast.
 on:
   push:
     tags: ["v*"]
@@ -13,6 +20,16 @@ on:
       - scripts/notarize.sh
       - scripts/import-signing-cert.sh
       - scripts/check-release.sh
+      - scripts/build-number.sh
+      - scripts/check-app.sh
+      - scripts/sparkle-tools.sh
+      - scripts/appcast.sh
+      - scripts/verify-appcast.sh
+      - scripts/ed25519-public-key.sh
+      - Package.swift
+      - Package.resolved
+      - Resources/Info.plist
+      - Resources/Tonearm.entitlements
   workflow_dispatch:
     inputs:
       version:
@@ -20,7 +37,7 @@ on:
         required: true
         default: 0.0.0-test
       sign:
-        description: Sign and notarize with the repository secrets, if they exist
+        description: Sign, notarize and sign the appcast with the repository secrets, if they exist
         type: boolean
         default: false
 
@@ -43,6 +60,8 @@ jobs:
       contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
+      build: ${{ steps.version.outputs.build }}
+      tag: ${{ steps.version.outputs.tag }}
       publish: ${{ steps.version.outputs.publish }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -74,9 +93,14 @@ jobs:
             echo "::error::invalid version: $version"
             exit 1
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "publish=$publish" >> "$GITHUB_OUTPUT"
-          echo "Version $version, publish: $publish" >> "$GITHUB_STEP_SUMMARY"
+          build="$(scripts/build-number.sh "$version")"
+          {
+            echo "version=$version"
+            echo "build=$build"
+            echo "tag=v$version"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+          echo "Version $version (build $build), publish: $publish" >> "$GITHUB_STEP_SUMMARY"
 
   build:
     name: Build and package
@@ -87,9 +111,11 @@ jobs:
       contents: read
     outputs:
       signing: ${{ steps.signing.outputs.mode }}
+      appcast: ${{ steps.appcast.outputs.mode }}
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
-      BUILD: ${{ github.run_number }}
+      # major*10000 + minor*100 + patch; Sparkle compares it to find newer versions.
+      BUILD: ${{ needs.prepare.outputs.build }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -110,6 +136,8 @@ jobs:
           NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          SELF_SIGN_CERT_P12: ${{ secrets.SELF_SIGN_CERT_P12 }}
+          SELF_SIGN_CERT_PASSWORD: ${{ secrets.SELF_SIGN_CERT_PASSWORD }}
         run: |
           mode=adhoc
           if [ "$ALLOWED" = true ] && [ -n "$MACOS_CERT_P12" ]; then
@@ -123,24 +151,41 @@ jobs:
             elif [ -n "$APPLE_ID" ] && [ -n "$APPLE_TEAM_ID" ] && [ -n "$APPLE_APP_PASSWORD" ]; then
               mode=notarized
             fi
+          elif [ "$ALLOWED" = true ] && [ -n "$SELF_SIGN_CERT_P12" ]; then
+            if [ -z "$SELF_SIGN_CERT_PASSWORD" ]; then
+              echo "::error::SELF_SIGN_CERT_P12 is set but SELF_SIGN_CERT_PASSWORD is missing"
+              exit 1
+            fi
+            mode=self-signed
+          fi
+          if [ "$mode" = adhoc ] && [ "$ALLOWED" = true ]; then
+            echo "::warning::No signing secrets: ad-hoc signature. macOS will ask again for the Spotify permission after every update."
           fi
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "Signing: $mode" >> "$GITHUB_STEP_SUMMARY"
           echo "signing: $mode"
-      - name: Import signing certificate
-        if: steps.signing.outputs.mode != 'adhoc'
+      - name: Import Developer ID certificate
+        if: steps.signing.outputs.mode == 'developer-id' || steps.signing.outputs.mode == 'notarized'
         env:
-          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
-          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
-          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          CERT_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: scripts/import-signing-cert.sh
+      - name: Import self-signed certificate
+        if: steps.signing.outputs.mode == 'self-signed'
+        env:
+          CERT_P12: ${{ secrets.SELF_SIGN_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.SELF_SIGN_CERT_PASSWORD }}
+          CERT_IDENTITY: Tonearm Self-Signed
+          TRUST_CERT: "true"
         run: scripts/import-signing-cert.sh
       - name: Build app
         env:
-          SIGN_IDENTITY: ${{ steps.signing.outputs.mode != 'adhoc' && secrets.MACOS_SIGN_IDENTITY || '-' }}
+          SIGN_IDENTITY: ${{ (steps.signing.outputs.mode == 'developer-id' || steps.signing.outputs.mode == 'notarized') && secrets.MACOS_SIGN_IDENTITY || (steps.signing.outputs.mode == 'self-signed' && 'Tonearm Self-Signed' || '-') }}
         run: scripts/build-app.sh
       - name: Package
         env:
-          SIGN_IDENTITY: ${{ steps.signing.outputs.mode != 'adhoc' && secrets.MACOS_SIGN_IDENTITY || '-' }}
+          SIGN_IDENTITY: ${{ (steps.signing.outputs.mode == 'developer-id' || steps.signing.outputs.mode == 'notarized') && secrets.MACOS_SIGN_IDENTITY || (steps.signing.outputs.mode == 'self-signed' && 'Tonearm Self-Signed' || '-') }}
           NOTARIZE: ${{ steps.signing.outputs.mode == 'notarized' }}
           APPLE_ID: ${{ steps.signing.outputs.mode == 'notarized' && secrets.APPLE_ID || '' }}
           APPLE_TEAM_ID: ${{ steps.signing.outputs.mode == 'notarized' && secrets.APPLE_TEAM_ID || '' }}
@@ -150,17 +195,55 @@ jobs:
           NOTARY_ISSUER_ID: ${{ steps.signing.outputs.mode == 'notarized' && secrets.NOTARY_ISSUER_ID || '' }}
         run: scripts/package.sh
       - name: Inspect packaged app
+        env:
+          SIGNING: ${{ steps.signing.outputs.mode }}
         run: |
           check="$(mktemp -d)"
           ditto -x -k "dist/Tonearm-$VERSION.zip" "$check"
-          app="$check/Tonearm.app"
-          codesign --verify --strict --verbose=2 "$app"
-          codesign -dv --entitlements - "$app" 2>&1 | tee "$check/codesign.txt"
-          grep -q 'com.apple.security.automation.apple-events' "$check/codesign.txt"
-          grep -Eq 'flags=0x[0-9a-f]+\(.*runtime' "$check/codesign.txt"
-          archs="$(lipo -archs "$app/Contents/MacOS/Tonearm")"
-          [[ " $archs " == *" arm64 "* && " $archs " == *" x86_64 "* ]]
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$VERSION"
+          case "$SIGNING" in notarized) expect=developer-id ;; *) expect="$SIGNING" ;; esac
+          EXPECT_VERSION="$VERSION" EXPECT_BUILD="$BUILD" EXPECT_SIGNING="$expect" \
+            scripts/check-app.sh "$check/Tonearm.app"
+          cmp "dist/Tonearm-$VERSION.zip" dist/Tonearm.zip
+          cmp "dist/Tonearm-$VERSION.dmg" dist/Tonearm.dmg
+      - name: Sparkle tools
+        run: scripts/sparkle-tools.sh build/sparkle
+      # Signs the versioned zip, the file Sparkle downloads. Dry runs without the key sign
+      # with a throwaway key so the tools and the checks still run.
+      - name: Appcast
+        id: appcast
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ (github.event_name == 'push' || inputs.sign == true) && secrets.SPARKLE_ED_PRIVATE_KEY || '' }}
+          PUBLISH: ${{ needs.prepare.outputs.publish }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          OPENSSL="$(brew --prefix openssl@3)/bin/openssl"
+          export OPENSSL
+          public_key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' build/Tonearm.app/Contents/Info.plist)"
+          if [ -n "$SPARKLE_ED_PRIVATE_KEY" ]; then
+            mode=signed
+          elif [ "$PUBLISH" = true ]; then
+            mode=skipped
+            echo "::warning::SPARKLE_ED_PRIVATE_KEY is not set: this release has no appcast.xml, so installed copies will not see it as an update. See docs/releasing.md."
+          else
+            mode=dry-run
+            SPARKLE_ED_PRIVATE_KEY="$("$OPENSSL" rand -base64 32)"
+            echo "::add-mask::$SPARKLE_ED_PRIVATE_KEY"
+            public_key="$(SEED="$SPARKLE_ED_PRIVATE_KEY" scripts/ed25519-public-key.sh)"
+            echo "dry run: signing with a throwaway key, public key $public_key"
+            # Use the notes of the version in Info.plist so the markdown path runs too.
+            NOTES_FILE="changelogs/v$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist).md"
+            export NOTES_FILE
+          fi
+          if [ "$mode" != skipped ]; then
+            SPARKLE_ED_PRIVATE_KEY="$SPARKLE_ED_PRIVATE_KEY" SPARKLE_PUBLIC_KEY="$public_key" \
+              SIGN_UPDATE=build/sparkle/bin/sign_update \
+              scripts/appcast.sh "dist/Tonearm-$VERSION.zip" dist/appcast.xml
+            cat dist/appcast.xml
+            (cd dist && shasum -a 256 appcast.xml >> SHA256SUMS.txt)
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "Appcast: $mode" >> "$GITHUB_STEP_SUMMARY"
       - name: Remove signing keychain
         if: always() && steps.signing.outputs.mode != 'adhoc'
         run: security delete-keychain "$RUNNER_TEMP/tonearm-signing.keychain-db" || true
@@ -186,6 +269,7 @@ jobs:
       VERSION: ${{ needs.prepare.outputs.version }}
       TAG: ${{ github.ref_name }}
       SIGNING: ${{ needs.build.outputs.signing }}
+      APPCAST: ${{ needs.build.outputs.appcast }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -199,12 +283,26 @@ jobs:
         run: |
           ls -l
           sha256sum -c SHA256SUMS.txt
+      # Checks the signature again, on Linux, against the public key in the tagged Info.plist.
+      - name: Verify appcast
+        run: |
+          case "$APPCAST" in
+            signed)
+              public_key="$(grep -A1 '<key>SUPublicEDKey</key>' Resources/Info.plist \
+                | sed -n 's:.*<string>\(.*\)</string>.*:\1:p')"
+              scripts/verify-appcast.sh dist/appcast.xml "dist/Tonearm-$VERSION.zip" "$public_key"
+              ;;
+            skipped)
+              echo "::warning::No appcast.xml: SPARKLE_ED_PRIVATE_KEY was not set. Installed copies will not update to $TAG."
+              ;;
+            *)
+              echo "::error::unexpected appcast mode '$APPCAST'"
+              exit 1
+              ;;
+          esac
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: |
-            dist/Tonearm-${{ needs.prepare.outputs.version }}.zip
-            dist/Tonearm-${{ needs.prepare.outputs.version }}.dmg
-            dist/SHA256SUMS.txt
+          subject-path: dist/*
       - name: Write release notes
         run: |
           {
@@ -220,6 +318,11 @@ jobs:
                 ;;
               developer-id)
                 echo "Signed with a Developer ID. **Not notarized**, so macOS blocks the first launch: open Tonearm once, then go to System Settings > Privacy & Security and click Open Anyway."
+                ;;
+              self-signed)
+                echo "**Not notarized.** Tonearm is signed with its own certificate, not an Apple Developer ID, so macOS blocks the first launch. Open Tonearm once, then go to System Settings > Privacy & Security and click Open Anyway. On macOS 13 and 14 you can also Control-click Tonearm in Applications and choose Open."
+                echo
+                echo "You do this once. After that, Tonearm installs updates by itself, and every version is signed with the same certificate, so macOS keeps the permission to control Spotify."
                 ;;
               *)
                 echo "**Not notarized.** This build is ad-hoc signed, not signed with an Apple Developer ID, so macOS blocks the first launch. Open Tonearm once, then go to System Settings > Privacy & Security and click Open Anyway. On macOS 13 and 14 you can also Control-click Tonearm in Applications and choose Open."
@@ -239,6 +342,10 @@ jobs:
             echo "::error::release $TAG already exists; ship a new patch version instead"
             exit 1
           fi
-          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag \
-            --title "Tonearm $TAG" --notes-file "$RUNNER_TEMP/notes.md" \
-            "dist/Tonearm-$VERSION.dmg" "dist/Tonearm-$VERSION.zip" dist/SHA256SUMS.txt
+          files=("dist/Tonearm-$VERSION.dmg" "dist/Tonearm-$VERSION.zip" dist/Tonearm.dmg dist/Tonearm.zip dist/SHA256SUMS.txt)
+          if [ "$APPCAST" = signed ]; then
+            files+=(dist/appcast.xml)
+          fi
+          # --latest moves releases/latest/download/{appcast.xml,Tonearm.dmg} to this release.
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag --latest \
+            --title "Tonearm $TAG" --notes-file "$RUNNER_TEMP/notes.md" "${files[@]}"
