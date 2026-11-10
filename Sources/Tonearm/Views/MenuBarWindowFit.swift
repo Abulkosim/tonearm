@@ -96,17 +96,23 @@ final class WindowFitter: ObservableObject {
     }
 
     private func windowResizedElsewhere() {
-        guard Date() > animatingUntil, reasserts < 3 else { return }
+        // Our own setFrame also posts this; only a size we did not ask for counts.
+        guard Date() > animatingUntil, needsFit, reasserts < 3 else { return }
         reasserts += 1
         fit(animate: false)
     }
 
+    /// True when the window's content size differs from the measured size.
+    private var needsFit: Bool {
+        guard let window, contentSize.width > 0, contentSize.height > 0 else { return false }
+        let current = window.contentRect(forFrameRect: window.frame)
+        return abs(current.width - contentSize.width) > 0.5 || abs(current.height - contentSize.height) > 0.5
+    }
+
     /// Sets the window's content size to the measured size, top edge fixed.
     private func fit(animate: Bool) {
-        guard let window, contentSize.width > 0, contentSize.height > 0 else { return }
+        guard let window, needsFit else { return }
         let current = window.contentRect(forFrameRect: window.frame)
-        guard abs(current.width - contentSize.width) > 0.5 || abs(current.height - contentSize.height) > 0.5
-        else { return }
 
         var frame = window.frameRect(forContentRect: NSRect(origin: current.origin, size: contentSize))
         frame.origin.x = window.frame.minX

@@ -38,7 +38,26 @@ enum PlayerTheme {
             : String(format: "%d:%02d", m, s)
     }
 
+    /// Ring drawn around a control focused from the keyboard, in place of the system's blue one.
+    static let focusRing = Color.white.opacity(0.75)
+
     private static func rgb(_ r: Int, _ g: Int, _ b: Int) -> Color {
         Color(.sRGB, red: Double(r) / 255, green: Double(g) / 255, blue: Double(b) / 255, opacity: 1)
+    }
+}
+
+extension View {
+    /// Outlines the view while it has keyboard focus (Full Keyboard Access or Tab).
+    func focusOutline<S: InsettableShape>(_ shape: S, isFocused: Bool) -> some View {
+        overlay(shape.strokeBorder(PlayerTheme.focusRing, lineWidth: isFocused ? 1.5 : 0))
+    }
+
+    /// Turns off the system's blue focus ring. Our button styles draw their own with `focusOutline`.
+    @ViewBuilder func hidesSystemFocusRing() -> some View {
+        if #available(macOS 14, *) {
+            focusEffectDisabled()
+        } else {
+            self
+        }
     }
 }

@@ -16,11 +16,13 @@ private struct IconButtonBody: View {
     @State var hovering = false
     @Environment(\.isEnabled) var isEnabled
     @Environment(\.accessibilityReduceMotion) var reduceMotion
+    @Environment(\.isFocused) private var isFocused
 
     var body: some View {
         configuration.label
             .foregroundColor(color)
             .contentShape(Rectangle())
+            .focusOutline(RoundedRectangle(cornerRadius: 4, style: .continuous), isFocused: isFocused)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
             .onHover { hovering = $0 }
             .animation(PlayerTheme.quick, value: hovering)
@@ -47,6 +49,7 @@ private struct PlayButtonBody: View {
     let diameter: CGFloat
     @State var hovering = false
     @Environment(\.accessibilityReduceMotion) var reduceMotion
+    @Environment(\.isFocused) private var isFocused
 
     var body: some View {
         configuration.label
@@ -54,6 +57,7 @@ private struct PlayButtonBody: View {
             .frame(width: diameter, height: diameter)
             .background(Circle().fill(hovering ? PlayerTheme.greenHover : PlayerTheme.green))
             .contentShape(Circle())
+            .focusOutline(Circle().inset(by: -3), isFocused: isFocused)
             .scaleEffect(scale)
             .onHover { hovering = $0 }
             .animation(PlayerTheme.quick, value: hovering)
@@ -79,6 +83,7 @@ private struct PillButtonBody: View {
     @State var hovering = false
     @Environment(\.accessibilityReduceMotion) var reduceMotion
     @Environment(\.isEnabled) var isEnabled
+    @Environment(\.isFocused) private var isFocused
 
     var body: some View {
         configuration.label
@@ -89,6 +94,7 @@ private struct PillButtonBody: View {
             .background(Capsule().fill(hovering && isEnabled ? PlayerTheme.greenHover : PlayerTheme.green))
             .opacity(isEnabled ? 1 : 0.6)
             .contentShape(Capsule())
+            .focusOutline(Capsule().inset(by: -3), isFocused: isFocused)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .onHover { hovering = $0 }
             .animation(PlayerTheme.quick, value: hovering)
@@ -106,13 +112,16 @@ struct TextButtonStyle: ButtonStyle {
 private struct TextButtonBody: View {
     let configuration: ButtonStyleConfiguration
     @State var hovering = false
+    @Environment(\.isFocused) private var isFocused
 
     var body: some View {
         configuration.label
             .font(.system(size: 13, weight: .semibold))
             .foregroundColor(hovering || configuration.isPressed ? .white : PlayerTheme.textSecondary)
             .frame(height: 24)
+            .padding(.horizontal, 4)
             .contentShape(Rectangle())
+            .focusOutline(RoundedRectangle(cornerRadius: 4, style: .continuous), isFocused: isFocused)
             .onHover { hovering = $0 }
             .animation(PlayerTheme.quick, value: hovering)
     }
@@ -160,6 +169,7 @@ private struct ModeButtonBody: View {
     @State var hovering = false
     @Environment(\.isEnabled) var isEnabled
     @Environment(\.accessibilityReduceMotion) var reduceMotion
+    @Environment(\.isFocused) private var isFocused
 
     var body: some View {
         configuration.label
@@ -174,6 +184,7 @@ private struct ModeButtonBody: View {
                     .opacity(isOn ? 1 : 0)
             }
             .contentShape(Rectangle())
+            .focusOutline(RoundedRectangle(cornerRadius: 6, style: .continuous), isFocused: isFocused)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
             .onHover { hovering = $0 }
             .animation(PlayerTheme.quick, value: hovering)
@@ -199,6 +210,7 @@ private struct CoverButtonBody: View {
     let configuration: ButtonStyleConfiguration
     @State var hovering = false
     @Environment(\.accessibilityReduceMotion) var reduceMotion
+    @Environment(\.isFocused) private var isFocused
 
     var body: some View {
         configuration.label
@@ -207,6 +219,7 @@ private struct CoverButtonBody: View {
             .frame(width: 28, height: 28)
             .background(Circle().fill(Color.black.opacity(hovering ? 0.8 : 0.6)))
             .contentShape(Circle())
+            .focusOutline(Circle(), isFocused: isFocused)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.92 : 1)
             .onHover { hovering = $0 }
             .animation(PlayerTheme.quick, value: hovering)
@@ -241,8 +254,18 @@ struct LinkText: View {
 /// Shows the label as is and dims it while pressed.
 struct PressDimStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
+        PressDimBody(configuration: configuration)
+    }
+}
+
+private struct PressDimBody: View {
+    let configuration: ButtonStyleConfiguration
+    @Environment(\.isFocused) private var isFocused
+
+    var body: some View {
         configuration.label
             .contentShape(Rectangle())
             .opacity(configuration.isPressed ? 0.7 : 1)
+            .focusOutline(RoundedRectangle(cornerRadius: 4, style: .continuous).inset(by: -2), isFocused: isFocused)
     }
 }

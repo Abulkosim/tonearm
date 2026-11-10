@@ -178,11 +178,12 @@ final class PlayerModel: ObservableObject {
         }
     }
 
-    /// The MenuBarExtra panel is the app's only window besides the status item's own.
+    /// The MenuBarExtra panel is the app's only window besides the status item's own and
+    /// the welcome window.
     private func followPopoverWindow() {
         let visible = NSApp.windows.contains { window in
-            window.className != "NSStatusBarWindow" && window.isVisible
-                && window.occlusionState.contains(.visible) && window.frame.width > 40
+            window.className != "NSStatusBarWindow" && window.identifier != Onboarding.windowID
+                && window.isVisible && window.occlusionState.contains(.visible) && window.frame.width > 40
         }
         if visible != popoverVisible { popoverVisible = visible }
     }
