@@ -19,7 +19,7 @@ A small player in the macOS menu bar for the Spotify desktop app.
 
 ## Install
 
-1. Download `Tonearm.dmg` or `Tonearm.zip` from [Releases](https://github.com/Abulkosim/tonearm/releases/latest).
+1. Download `Tonearm-X.Y.Z.dmg` or `Tonearm-X.Y.Z.zip` from [Releases](https://github.com/Abulkosim/tonearm/releases/latest).
 2. Drag Tonearm to Applications.
 3. Open it.
 
@@ -32,6 +32,8 @@ The app may not be notarized by Apple, so macOS will block it the first time. To
   ```sh
   xattr -dr com.apple.quarantine /Applications/Tonearm.app
   ```
+
+Each release lists its checksums in `SHA256SUMS.txt`. Maintainers: how releases are built and published is in [docs/releasing.md](docs/releasing.md).
 
 ## First run
 

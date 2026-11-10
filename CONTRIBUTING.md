@@ -36,3 +36,7 @@ The icon is drawn in code by `scripts/make-icon.swift`. Run `swift scripts/make-
 - The commit body says what changed and why.
 - CI must pass. Attach the snapshot or a screenshot for visual changes.
 - Talk to Spotify only through AppleScript. No Web API, no login, no third-party packages.
+
+## Releases
+
+See [docs/releasing.md](docs/releasing.md).
