@@ -1,0 +1,38 @@
+name: Icon
+
+on:
+  pull_request:
+    paths:
+      - design/**
+      - scripts/make-icon.swift
+      - .github/workflows/icon.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  icon:
+    name: Render icon
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Render
+        run: swift scripts/make-icon.swift
+      - name: Check committed icon is current
+        run: git diff --stat --exit-code -- design/icon-1024.png || echo "::warning::design/icon-1024.png differs from the script output; commit the new render"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: icon
+          path: |
+            Resources/AppIcon.icns
+            design/icon-1024.png
+            build/icon/preview-sizes.png
+          retention-days: 14
