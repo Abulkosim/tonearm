@@ -140,14 +140,17 @@ struct PositionClock: Equatable {
     }
 
     /// The clock to use after Spotify reported `reported` seconds at `time`.
-    /// While playing, differences under `tolerance` are ignored so AppleScript latency
-    /// does not make the bar step backwards. A state change always re-anchors.
+    /// While playing (before and after), differences under `tolerance` are ignored so
+    /// AppleScript latency does not make the bar step backwards. Otherwise Spotify's value
+    /// wins: a paused playhead snaps to the exact spot, and a state change re-anchors there.
     func reconciled(reported: Double, at time: Date, isPlaying playing: Bool, tolerance: Double) -> PositionClock {
         let local = position(at: time)
-        let keepLocal = abs(local - reported) < tolerance
-        if keepLocal && playing == isPlaying { return self }
-        return PositionClock(position: keepLocal ? local : max(0, reported), date: time,
-                             isPlaying: playing, duration: duration)
+        let reported = max(0, reported)
+        if playing == isPlaying {
+            let keepLocal = playing ? abs(local - reported) < tolerance : local == reported
+            if keepLocal { return self }
+        }
+        return PositionClock(position: reported, date: time, isPlaying: playing, duration: duration)
     }
 }
 
@@ -159,7 +162,7 @@ final class SpotifyBridge {
     static let changedNotification = Notification.Name("com.spotify.client.PlaybackStateChanged")
 
     enum Command: Equatable {
-        case playPause, next, previous
+        case play, playPause, next, previous
         case seek(Double)
         case volume(Int)
         case shuffle(Bool)
@@ -167,6 +170,7 @@ final class SpotifyBridge {
 
         var appleScript: String {
             switch self {
+            case .play: return "play"
             case .playPause: return "playpause"
             case .next: return "next track"
             case .previous: return "previous track"
@@ -212,9 +216,19 @@ final class SpotifyBridge {
     /// once the user answered. Runs on the main actor. Set it once, before the first fetch.
     var permissionPromptChanged: (@MainActor (Bool) -> Void)?
 
-    /// Safe on any thread.
+    /// Safe on any thread. Checked again right before every script.
     var isRunning: Bool {
-        NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleID).contains { !$0.isTerminated }
+        NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleID).contains(where: Self.isAlive)
+    }
+
+    /// `isTerminated` is updated on the main run loop, so off the main thread it can lag a
+    /// process that just exited. The process table is checked too: sending an Apple Event to a
+    /// Spotify that just died makes AppleScript launch it again.
+    private static func isAlive(_ app: NSRunningApplication) -> Bool {
+        guard !app.isTerminated else { return false }
+        let pid = app.processIdentifier
+        guard pid > 0 else { return false }
+        return kill(pid, 0) == 0 || errno == EPERM
     }
 
     var isInstalled: Bool {

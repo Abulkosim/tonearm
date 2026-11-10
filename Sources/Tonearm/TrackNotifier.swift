@@ -70,8 +70,8 @@ final class TrackNotifier {
         postPending(image: image)
     }
 
-    /// Asks for permission to post. macOS shows its prompt only the first time.
-    /// Calls back on the main queue with whether notifications are allowed.
+    /// Asks for permission to post. macOS shows its prompt only while the user has not
+    /// answered yet, so call it only for `.notDetermined`. Calls back on the main actor.
     static func requestAuthorization(_ done: @escaping @MainActor (Bool) -> Void) {
         guard isAvailable else { return done(false) }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { granted, error in
@@ -79,6 +79,43 @@ final class TrackNotifier {
             Task { @MainActor in done(granted) }
         }
     }
+
+    enum Authorization: Equatable {
+        case allowed, denied, notDetermined
+        /// Not inside Tonearm.app (tests, a bare binary).
+        case unavailable
+    }
+
+    /// What macOS currently allows, without asking. Calls back on the main actor.
+    static func authorization(_ done: @escaping @MainActor (Authorization) -> Void) {
+        guard isAvailable else { return done(.unavailable) }
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            let result: Authorization
+            switch settings.authorizationStatus {
+            case .denied: result = .denied
+            case .notDetermined: result = .notDetermined
+            default: result = .allowed
+            }
+            Task { @MainActor in done(result) }
+        }
+    }
+
+    /// True when the user wants notifications but macOS blocks them. Pure, for tests.
+    nonisolated static func isBlocked(settingOn: Bool, authorization: Authorization) -> Bool {
+        settingOn && authorization == .denied
+    }
+
+    /// Makes banners show while Tonearm is the active app (macOS hides them otherwise) and
+    /// runs `onClick` when the user clicks one. Call once, at startup.
+    static func installDelegate(onClick: @escaping @MainActor () -> Void) {
+        guard isAvailable, delegate == nil else { return }
+        let d = NotificationDelegate(onClick: onClick)
+        delegate = d
+        UNUserNotificationCenter.current().delegate = d
+    }
+
+    /// The notification center keeps only a weak reference.
+    private static var delegate: NotificationDelegate?
 
     // MARK: Private
 
@@ -131,5 +168,28 @@ final class TrackNotifier {
         } catch {
             return nil
         }
+    }
+}
+
+private final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    private let onClick: @MainActor () -> Void
+
+    init(onClick: @escaping @MainActor () -> Void) {
+        self.onClick = onClick
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler:
+                                @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list])
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
+            let onClick = onClick
+            Task { @MainActor in onClick() }
+        }
+        completionHandler()
     }
 }
