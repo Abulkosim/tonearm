@@ -231,7 +231,7 @@ struct WelcomeView: View {
                 .font(.system(size: 17, weight: .bold))
                 .foregroundColor(.white)
                 .padding(.top, 20)
-            Text("Click its icon to see what's playing and control Spotify")
+            Text("Click its icon to open the player")
                 .font(.system(size: 13))
                 .foregroundColor(PlayerTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
