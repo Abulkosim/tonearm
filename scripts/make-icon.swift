@@ -51,20 +51,10 @@ func makeContext(_ size: Int) -> CGContext {
     )!
 }
 
-/// macOS Big Sur style body: a superellipse inside the standard 824 px grid.
+/// macOS Big Sur style body: an 824 px rounded square on the 1024 px grid.
 func bodyPath() -> CGPath {
-    let path = CGMutablePath()
-    let center = canvas / 2, half: CGFloat = 412, n: CGFloat = 5
-    let steps = 720
-    for i in 0..<steps {
-        let t = CGFloat(i) / CGFloat(steps) * 2 * .pi
-        let c = cos(t), s = sin(t)
-        let x = center + half * (c < 0 ? -1 : 1) * pow(abs(c), 2 / n)
-        let y = center + half * (s < 0 ? -1 : 1) * pow(abs(s), 2 / n)
-        if i == 0 { path.move(to: CGPoint(x: x, y: y)) } else { path.addLine(to: CGPoint(x: x, y: y)) }
-    }
-    path.closeSubpath()
-    return path
+    CGPath(roundedRect: CGRect(x: 100, y: 100, width: 824, height: 824),
+           cornerWidth: 185, cornerHeight: 185, transform: nil)
 }
 
 func circle(_ c: CGPoint, _ r: CGFloat) -> CGRect {
@@ -151,14 +141,18 @@ func drawIcon(_ ctx: CGContext) {
     ctx.addEllipse(in: circle(rc, rr - 6))
     ctx.addEllipse(in: circle(rc, 124))
     ctx.clip(using: .evenOdd)
+    // Stacked wedges of falling width give the sheen a soft edge.
     for base in [CGFloat.pi * 1.18, CGFloat.pi * 0.18] {
-        let wedge = CGMutablePath()
-        wedge.move(to: rc)
-        wedge.addArc(center: rc, radius: rr, startAngle: base - 0.22, endAngle: base + 0.22, clockwise: false)
-        wedge.closeSubpath()
-        ctx.addPath(wedge)
-        ctx.setFillColor(color(0xffffff, 0.035))
-        ctx.fillPath()
+        for step in 1...8 {
+            let spread = 0.05 * CGFloat(step)
+            let wedge = CGMutablePath()
+            wedge.move(to: rc)
+            wedge.addArc(center: rc, radius: rr, startAngle: base - spread, endAngle: base + spread, clockwise: false)
+            wedge.closeSubpath()
+            ctx.addPath(wedge)
+            ctx.setFillColor(color(0xffffff, 0.007))
+            ctx.fillPath()
+        }
     }
     ctx.restoreGState()
     ctx.setStrokeColor(color(0xffffff, 0.10))
@@ -182,17 +176,17 @@ func drawIcon(_ ctx: CGContext) {
     let armDir = unit(pivot, elbow)
     let tail = add(pivot, armDir, -132)
     let weightCenter = add(pivot, armDir, -100)
-    let shellCenter = add(elbow, shellDir, 52)
+    let shellCenter = add(elbow, shellDir, 56)
 
-    let armWidth: CGFloat = 20
+    let armWidth: CGFloat = 26
     let tube = CGMutablePath()
     tube.move(to: tail)
     tube.addLine(to: elbow)
     let tubeShape = tube.copy(strokingWithWidth: armWidth, lineCap: .round, lineJoin: .round, miterLimit: 10)
-    let shell = bar(center: shellCenter, dir: shellDir, length: 112, width: 46, radius: 12)
-    let cartridge = bar(center: add(shellCenter, shellDir, 26), dir: shellDir, length: 48, width: 34, radius: 6)
+    let shell = bar(center: shellCenter, dir: shellDir, length: 120, width: 54, radius: 14)
+    let cartridge = bar(center: add(shellCenter, shellDir, 26), dir: shellDir, length: 50, width: 40, radius: 8)
     let normal = CGVector(dx: -shellDir.dy, dy: shellDir.dx)
-    let lift = bar(center: add(add(shellCenter, shellDir, -14), normal, 34), dir: normal, length: 34, width: 10, radius: 5)
+    let lift = bar(center: add(add(shellCenter, shellDir, -14), normal, 40), dir: normal, length: 36, width: 12, radius: 6)
     let weight = bar(center: weightCenter, dir: armDir, length: 72, width: 66, radius: 12)
 
     // Base plate under the pivot.
@@ -217,13 +211,13 @@ func drawIcon(_ ctx: CGContext) {
 
     fillMetal(ctx, tubeShape, center: pivot, dir: armDir, width: armWidth, metalLight, metalDark)
     fillMetal(ctx, weight, center: weightCenter, dir: armDir, width: 66, steelLight, steelDark)
-    fillMetal(ctx, lift, center: shellCenter, dir: normal, width: 10, metalLight, metalDark)
-    fillMetal(ctx, shell, center: shellCenter, dir: shellDir, width: 46, metalLight, metalDark)
-    fillMetal(ctx, cartridge, center: shellCenter, dir: shellDir, width: 34, steelLight, steelDark)
+    fillMetal(ctx, lift, center: shellCenter, dir: normal, width: 12, metalLight, metalDark)
+    fillMetal(ctx, shell, center: shellCenter, dir: shellDir, width: 54, metalLight, metalDark)
+    fillMetal(ctx, cartridge, center: shellCenter, dir: shellDir, width: 40, steelLight, steelDark)
 
     // Bearing on top of the pivot.
-    fillMetal(ctx, CGPath(ellipseIn: circle(pivot, 44), transform: nil),
-              center: pivot, dir: CGVector(dx: 1, dy: 0), width: 88, metalLight, metalDark)
+    fillMetal(ctx, CGPath(ellipseIn: circle(pivot, 48), transform: nil),
+              center: pivot, dir: CGVector(dx: 1, dy: 0), width: 96, metalLight, metalDark)
     ctx.setFillColor(plate)
     ctx.fillEllipse(in: circle(pivot, 20))
 
