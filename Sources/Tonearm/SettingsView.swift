@@ -7,6 +7,7 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var login = LaunchAtLogin.shared
+    @ObservedObject private var updater = Updater.shared
 
     static let repoURL = URL(string: "https://github.com/Abulkosim/tonearm")!
 
@@ -83,6 +84,17 @@ struct SettingsView: View {
             }
             .padding(.bottom, 4)
             .accessibilityElement(children: .combine)
+
+            divider
+
+            row("Check for updates automatically") {
+                GreenSwitch(isOn: $updater.automaticallyChecks, label: "Check for updates automatically")
+            }
+            Button("Check for Updates…") { updater.checkForUpdates() }
+                .buttonStyle(QuietButtonStyle(color: Theme.accent, hover: Theme.accentHover))
+                .disabled(!updater.canCheck)
+                .frame(height: 24)
+                .padding(.bottom, 4)
 
             divider
 

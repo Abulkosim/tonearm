@@ -13,6 +13,8 @@ enum Entry {
             SettingsView.renderSnapshot(to: dir.appendingPathComponent("settings.png"))
             exit(0)
         }
+        // Runs once the app's run loop is up. Never reached in --snapshot runs or tests.
+        Task { @MainActor in Updater.shared.start() }
         TonearmApp.main()
     }
 }
