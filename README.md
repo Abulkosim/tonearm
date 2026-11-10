@@ -8,13 +8,14 @@ A small player in the macOS menu bar for the Spotify desktop app.
 
 ## Features
 
-- The current song and artist in the menu bar.
+- The current song in the menu bar, with or without the artist, or just an icon.
 - Click it to see the cover, title and artist.
 - Play, pause, next and previous.
 - Drag the progress bar to seek. Drag the volume bar to change Spotify's volume.
 - The background takes its colors from the cover.
 - Updates as soon as Spotify changes track or state.
-- No account, no login, no dock icon.
+- Optional launch at login.
+- No account, no login, no Dock icon.
 
 ## Install
 

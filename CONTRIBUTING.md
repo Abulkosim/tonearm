@@ -11,6 +11,8 @@ open build/Tonearm.app
 
 This builds a universal `build/Tonearm.app`, signed ad hoc. Set `SIGN_IDENTITY` to sign with a real certificate.
 
+Run the tests with `swift test`.
+
 For quick iterations, `swift build` and `swift run` work too, but macOS ties the Automation permission to the app bundle, so test permission prompts with the built app.
 
 If you need to see the permission prompt again, see [docs/permissions.md](docs/permissions.md).
