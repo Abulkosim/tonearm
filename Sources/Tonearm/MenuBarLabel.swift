@@ -34,9 +34,14 @@ struct MenuBarLabel: View {
 
     /// Menu bar text for a track. Pure, for tests.
     static func title(_ title: String, artist: String, showArtist: Bool, maxLength: Int) -> String {
-        var parts = [title.trimmingCharacters(in: .whitespacesAndNewlines)]
-        if showArtist { parts.append(artist.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        var parts = [singleLine(title)]
+        if showArtist { parts.append(singleLine(artist)) }
         return shorten(parts.filter { !$0.isEmpty }.joined(separator: " · "), to: maxLength)
+    }
+
+    /// Collapses line breaks, tabs and repeated spaces, which would break the menu bar layout.
+    static func singleLine(_ s: String) -> String {
+        s.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
     }
 
     /// Cuts `s` to at most `max` characters, ending in "…" when cut.

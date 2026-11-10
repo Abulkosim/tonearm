@@ -6,7 +6,8 @@ import ServiceManagement
 final class LaunchAtLogin: ObservableObject {
     static let shared = LaunchAtLogin()
 
-    @Published private(set) var status: SMAppService.Status = .notRegistered
+    /// Read at start, so the switch is right before the settings panel first appears.
+    @Published private(set) var status: SMAppService.Status = SMAppService.mainApp.status
 
     /// On when registered, or registered and waiting for the user's approval.
     var isOn: Bool { status == .enabled || status == .requiresApproval }
