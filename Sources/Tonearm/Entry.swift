@@ -7,7 +7,9 @@ enum Entry {
     static func main() {
         let args = CommandLine.arguments
         if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
-            Snapshot.render(to: URL(fileURLWithPath: args[i + 1]))
+            let url = URL(fileURLWithPath: args[i + 1])
+            Snapshot.render(to: url)
+            SettingsView.renderSnapshot(to: url.deletingLastPathComponent().appendingPathComponent("settings.png"))
             exit(0)
         }
         TonearmApp.main()
@@ -16,13 +18,17 @@ enum Entry {
 
 struct TonearmApp: App {
     @StateObject private var model = PlayerModel()
+    @StateObject private var settings = AppSettings.shared
+    @StateObject private var launchAtLogin = LaunchAtLogin.shared
 
     var body: some Scene {
         MenuBarExtra {
             PlayerView()
                 .environmentObject(model)
+                .environmentObject(settings)
+                .environmentObject(launchAtLogin)
         } label: {
-            MenuBarLabel(model: model)
+            MenuBarLabel(model: model, settings: settings)
         }
         .menuBarExtraStyle(.window)
     }
