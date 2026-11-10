@@ -1,6 +1,7 @@
-// TEMPORARY. Stand-ins for the model and settings API that the core agent adds in round 2
-// (shuffle, repeat, relative seek and volume, show in Spotify, copy link, layout and the two
-// new settings). They let the UI build on its own. Delete this file when the core PR merges.
+// TEMPORARY. Stand-ins for the model, settings and hot key API from the core PR (#9):
+// shuffle, repeat, relative seek and volume, show in Spotify, copy link, permission prompt
+// state, layout, the two new settings and HotKeys.Action. They mirror its signatures so the
+// UI builds on its own. Delete this file when #9 merges.
 
 import AppKit
 import SwiftUI
@@ -35,10 +36,13 @@ extension PlayerModel {
             .first?.activate(options: [])
     }
 
-    func copyTrackLink() {
-        guard let url = trackURL else { return }
+    var isAskingPermission: Bool { false }
+
+    func copyTrackLink() -> Bool {
+        guard let url = trackURL else { return false }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        return true
     }
 }
 
@@ -66,6 +70,30 @@ extension AppSettings {
         set {
             objectWillChange.send()
             UserDefaults.standard.set(newValue, forKey: "shim.notifyOnTrackChange")
+        }
+    }
+}
+
+final class HotKeys {
+    enum Action: UInt32, CaseIterable {
+        case playPause = 1
+        case next
+        case previous
+
+        var keys: String {
+            switch self {
+            case .playPause: return "⌃⌥P"
+            case .next: return "⌃⌥N"
+            case .previous: return "⌃⌥B"
+            }
+        }
+
+        var title: String {
+            switch self {
+            case .playPause: return "Play or pause"
+            case .next: return "Next song"
+            case .previous: return "Previous song"
+            }
         }
     }
 }

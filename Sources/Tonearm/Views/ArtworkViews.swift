@@ -87,14 +87,15 @@ struct ArtworkBackground: View {
 /// Buttons shown on the cover while the pointer is over it.
 struct CoverActions: View {
     var canCopy: Bool
-    var copied: Bool
+    /// Short confirmation next to the buttons, like "Copied".
+    var note: String?
     var open: () -> Void
     var copy: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            if copied {
-                Text("Copied")
+            if let note {
+                Text(note)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.white)
                     .padding(.horizontal, 10)
@@ -103,7 +104,7 @@ struct CoverActions: View {
                     .transition(.opacity)
             }
             Button(action: copy) {
-                Image(systemName: copied ? "checkmark" : "link")
+                Image(systemName: note == "Copied" ? "checkmark" : "link")
             }
             .buttonStyle(CoverButtonStyle())
             .disabled(!canCopy)
@@ -117,6 +118,6 @@ struct CoverActions: View {
             .help("Open in Spotify")
             .accessibilityLabel("Open in Spotify")
         }
-        .animation(PlayerTheme.medium, value: copied)
+        .animation(PlayerTheme.medium, value: note)
     }
 }

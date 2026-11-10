@@ -11,7 +11,9 @@ struct PlayerView: View {
         var shuffling: Bool?
         var repeating: Bool?
         var coverHover = false
-        var linkCopied = false
+        /// Text of the note shown next to the cover buttons, like "Copied".
+        var coverNote: String?
+        var askingPermission = false
     }
 
     /// Nil in the app.
@@ -20,7 +22,7 @@ struct PlayerView: View {
     init(preview: Preview? = nil) {
         self.preview = preview
         _showSettings = State(initialValue: preview?.settingsOpen ?? false)
-        _copied = State(initialValue: preview?.linkCopied ?? false)
+        _coverNote = State(initialValue: preview?.coverNote)
     }
 
     @EnvironmentObject var model: PlayerModel
@@ -31,8 +33,8 @@ struct PlayerView: View {
     /// Volume to go back to when unmuting.
     @State private var volumeBeforeMute = 50
     @State private var hoveringCover = false
-    /// Shows "Copied" on the cover for a moment after copying the song link.
-    @State private var copied: Bool
+    /// "Copied" or "No link", shown on the cover for a moment after copying the song link.
+    @State private var coverNote: String?
     @State private var copyCount = 0
     @State private var keys = PopoverKeys()
 
@@ -78,6 +80,14 @@ struct PlayerView: View {
                     .padding(.bottom, 12)
                 if status == .ready {
                     largePlayer
+                } else if preview?.askingPermission ?? model.isAskingPermission {
+                    StatusMessage(
+                        symbol: "hand.raised.fill",
+                        title: "Waiting for permission",
+                        detail: "Click OK in the macOS dialog to let Tonearm control Spotify"
+                    ) {
+                        EmptyView()
+                    }
                 } else {
                     statusScreen
                 }
@@ -229,7 +239,7 @@ struct PlayerView: View {
         .animation(PlayerTheme.fade, value: coverKey)
         .overlay(alignment: .topTrailing) {
             if showCoverActions {
-                CoverActions(canCopy: model.trackURL != nil || isSnapshot, copied: copied,
+                CoverActions(canCopy: model.trackURL != nil || isSnapshot, note: coverNote,
                              open: model.showInSpotify, copy: copyLink)
                     .padding(8)
                     .transition(.opacity)
@@ -247,15 +257,16 @@ struct PlayerView: View {
             .disabled(model.trackURL == nil)
     }
 
+    /// Copies the link and shows "Copied" (or "No link" for local files and ads) once,
+    /// fading out after a moment.
     private func copyLink() {
-        guard model.trackURL != nil else { return }
-        model.copyTrackLink()
+        let note = model.copyTrackLink() ? "Copied" : "No link"
         copyCount += 1
         let count = copyCount
-        withAnimation(PlayerTheme.medium) { copied = true }
+        withAnimation(PlayerTheme.medium) { coverNote = note }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             guard copyCount == count else { return }
-            withAnimation(PlayerTheme.fade) { copied = false }
+            withAnimation(PlayerTheme.fade) { coverNote = nil }
         }
     }
 

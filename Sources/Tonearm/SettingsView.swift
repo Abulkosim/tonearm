@@ -10,12 +10,10 @@ struct SettingsView: View {
 
     static let repoURL = URL(string: "https://github.com/Abulkosim/tonearm")!
 
-    /// The global combos the core registers when "Global shortcuts" is on.
-    static let globalCombos: [(keys: String, action: String)] = [
-        ("⌃⌥Space", "Play or pause"),
-        ("⌃⌥→", "Next"),
-        ("⌃⌥←", "Previous"),
-    ]
+    /// The system-wide combos registered when "Global shortcuts" is on.
+    static var globalCombos: [(keys: String, action: String)] {
+        HotKeys.Action.allCases.map { ($0.keys, $0.title) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -69,7 +67,7 @@ struct SettingsView: View {
             row("Global shortcuts") {
                 GreenSwitch(isOn: $settings.globalShortcuts, label: "Global shortcuts")
             }
-            ShortcutList(items: Self.globalCombos, keyWidth: 64)
+            ShortcutList(items: Self.globalCombos, keyWidth: 48)
                 .padding(.bottom, 4)
                 .accessibilityElement(children: .combine)
 
