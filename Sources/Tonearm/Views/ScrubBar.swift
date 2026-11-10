@@ -103,10 +103,11 @@ struct ScrubBar: View {
                 onScrub?(v)
             }
             .onEnded { g in
+                // Cleared first, so a bar disabled mid-drag never stays frozen.
+                dragValue = nil
                 guard isEnabled, width > 0 else { return }
                 let v = min(max(g.location.x / width, 0), 1)
                 pendingValue = v
-                dragValue = nil
                 onCommit(v)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     if pendingValue == v { pendingValue = nil }

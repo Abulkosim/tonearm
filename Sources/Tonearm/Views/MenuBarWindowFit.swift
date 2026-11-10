@@ -24,13 +24,15 @@ import SwiftUI
 extension View {
     /// Keeps the MenuBarExtra window exactly the size of this view. Apply the background
     /// after this modifier so it fills the window.
-    func fitsMenuBarWindow(_ enabled: Bool = true) -> some View {
-        modifier(MenuBarWindowFit(enabled: enabled))
+    /// `onWindow` gets the window once the view lands in it.
+    func fitsMenuBarWindow(_ enabled: Bool = true, onWindow: ((NSWindow) -> Void)? = nil) -> some View {
+        modifier(MenuBarWindowFit(enabled: enabled, onWindow: onWindow))
     }
 }
 
 private struct MenuBarWindowFit: ViewModifier {
     let enabled: Bool
+    let onWindow: ((NSWindow) -> Void)?
     @StateObject private var fitter = WindowFitter()
 
     func body(content: Content) -> some View {
@@ -43,7 +45,7 @@ private struct MenuBarWindowFit: ViewModifier {
                         .onChange(of: geo.size) { fitter.contentSizeChanged($0) }
                 })
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .background(WindowReader(fitter: fitter))
+                .background(WindowReader(fitter: fitter, onWindow: onWindow))
                 .onAppear { fitter.windowShown() }
         } else {
             content
@@ -75,7 +77,8 @@ final class WindowFitter: ObservableObject {
         Task { @MainActor in self.fit(animate: false) }
     }
 
-    fileprivate func attach(to window: NSWindow?, from view: NSView) {
+    fileprivate func attach(to window: NSWindow?, from view: NSView, onWindow: ((NSWindow) -> Void)?) {
+        if let window { onWindow?(window) }
         guard window !== self.window else { return }
         observers.forEach { NotificationCenter.default.removeObserver($0) }
         observers = []
@@ -96,17 +99,23 @@ final class WindowFitter: ObservableObject {
     }
 
     private func windowResizedElsewhere() {
-        guard Date() > animatingUntil, reasserts < 3 else { return }
+        // Our own setFrame also posts this; only a size we did not ask for counts.
+        guard Date() > animatingUntil, needsFit, reasserts < 3 else { return }
         reasserts += 1
         fit(animate: false)
     }
 
+    /// True when the window's content size differs from the measured size.
+    private var needsFit: Bool {
+        guard let window, contentSize.width > 0, contentSize.height > 0 else { return false }
+        let current = window.contentRect(forFrameRect: window.frame)
+        return abs(current.width - contentSize.width) > 0.5 || abs(current.height - contentSize.height) > 0.5
+    }
+
     /// Sets the window's content size to the measured size, top edge fixed.
     private func fit(animate: Bool) {
-        guard let window, contentSize.width > 0, contentSize.height > 0 else { return }
+        guard let window, needsFit else { return }
         let current = window.contentRect(forFrameRect: window.frame)
-        guard abs(current.width - contentSize.width) > 0.5 || abs(current.height - contentSize.height) > 0.5
-        else { return }
 
         var frame = window.frameRect(forContentRect: NSRect(origin: current.origin, size: contentSize))
         frame.origin.x = window.frame.minX
@@ -164,10 +173,12 @@ final class WindowFitter: ObservableObject {
 /// Zero-size view that reports the window it lands in.
 private struct WindowReader: NSViewRepresentable {
     let fitter: WindowFitter
+    let onWindow: ((NSWindow) -> Void)?
 
     func makeNSView(context: Context) -> NSView {
         let view = WindowReaderView()
         view.fitter = fitter
+        view.onWindow = onWindow
         return view
     }
 
@@ -176,10 +187,11 @@ private struct WindowReader: NSViewRepresentable {
 
 private final class WindowReaderView: NSView {
     weak var fitter: WindowFitter?
+    var onWindow: ((NSWindow) -> Void)?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        fitter?.attach(to: window, from: self)
+        fitter?.attach(to: window, from: self, onWindow: onWindow)
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }

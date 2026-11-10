@@ -135,6 +135,7 @@ final class ReplyParsingTests: XCTestCase {
         XCTAssertEqual(SpotifyBridge.Command.seek(.nan).appleScript, "set player position to 0.00")
         XCTAssertEqual(SpotifyBridge.Command.shuffle(true).appleScript, "set shuffling to true")
         XCTAssertEqual(SpotifyBridge.Command.repeating(false).appleScript, "set repeating to false")
+        XCTAssertEqual(SpotifyBridge.Command.play.appleScript, "play")
         XCTAssertTrue(SpotifyBridge.source(for: .next).contains("is running"))
     }
 

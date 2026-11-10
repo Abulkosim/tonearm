@@ -43,7 +43,29 @@ final class PositionClockTests: XCTestCase {
         let t = t0.addingTimeInterval(5)
         let r = c.reconciled(reported: 15.2, at: t, isPlaying: false, tolerance: 0.75)
         XCTAssertFalse(r.isPlaying)
-        XCTAssertEqual(r.position(at: t.addingTimeInterval(10)), 15, accuracy: 0.0001)
+        // A pause takes Spotify's exact position, even when it is close to ours.
+        XCTAssertEqual(r.position(at: t.addingTimeInterval(10)), 15.2, accuracy: 0.0001)
+    }
+
+    func testPausedSnapsToSmallCorrection() {
+        let c = PositionClock(position: 10, date: t0, isPlaying: false, duration: 100)
+        let t = t0.addingTimeInterval(3)
+        let r = c.reconciled(reported: 10.4, at: t, isPlaying: false, tolerance: 0.75)
+        XCTAssertEqual(r.position(at: t.addingTimeInterval(5)), 10.4, accuracy: 0.0001)
+        XCTAssertFalse(r.isPlaying)
+    }
+
+    func testPausedSameValueKeepsClock() {
+        let c = PositionClock(position: 10, date: t0, isPlaying: false, duration: 100)
+        XCTAssertEqual(c.reconciled(reported: 10, at: t0.addingTimeInterval(3), isPlaying: false, tolerance: 0.75), c)
+    }
+
+    func testPlayTakesReportedPosition() {
+        let c = PositionClock(position: 10, date: t0, isPlaying: false, duration: 100)
+        let t = t0.addingTimeInterval(1)
+        let r = c.reconciled(reported: 10.3, at: t, isPlaying: true, tolerance: 0.75)
+        XCTAssertTrue(r.isPlaying)
+        XCTAssertEqual(r.position(at: t.addingTimeInterval(2)), 12.3, accuracy: 0.0001)
     }
 
     func testHoldKeepsLocalPlayhead() {

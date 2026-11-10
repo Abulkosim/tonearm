@@ -13,11 +13,15 @@ enum Entry {
             SettingsView.renderSnapshot(to: dir.appendingPathComponent("settings.png"))
             exit(0)
         }
+        // Runs once the app's run loop is up. Never reached in --snapshot runs or tests.
+        Task { @MainActor in Updater.shared.start() }
         TonearmApp.main()
     }
 }
 
 struct TonearmApp: App {
+    /// First-run welcome window, and opening the player when Tonearm.app is opened again.
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = PlayerModel()
     @StateObject private var settings = AppSettings.shared
     @StateObject private var launchAtLogin = LaunchAtLogin.shared

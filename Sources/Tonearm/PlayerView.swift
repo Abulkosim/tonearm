@@ -13,6 +13,8 @@ struct PlayerView: View {
         var coverHover = false
         /// Text of the note shown next to the cover buttons, like "Copied".
         var coverNote: String?
+        /// Spotify's process is up but has not answered yet.
+        var connecting = false
     }
 
     /// Nil in the app.
@@ -36,6 +38,9 @@ struct PlayerView: View {
     @State private var coverNote: String?
     @State private var copyCount = 0
     @State private var keys = PopoverKeys()
+    /// Bumped each time the window closes. The panels are rebuilt under a new id, so hover
+    /// states that never got their "mouse left" event start fresh on the next open.
+    @State private var session = 0
 
     private static let width: CGFloat = 300
     private static let padding: CGFloat = 16
@@ -58,13 +63,20 @@ struct PlayerView: View {
                     .transition(.opacity)
             }
         }
+        .id(session)
         .frame(width: Self.width)
-        .fitsMenuBarWindow(!isSnapshot)
+        .fitsMenuBarWindow(!isSnapshot, onWindow: model.attachPopoverWindow)
         .background(ArtworkBackground(colors: showSettings || status != .ready ? nil : model.artworkColors))
         .popoverWindowShape(!isSnapshot)
         .environment(\.colorScheme, .dark)
+        .hidesSystemFocusRing()
         .onAppear(perform: appeared)
         .onDisappear(perform: disappeared)
+        .onChange(of: model.popoverVisible) { visible in
+            if visible { appeared() } else { disappeared() }
+        }
+        .onChange(of: trackKey) { _ in scrubSeconds = nil }
+        .onChange(of: canSeek) { if !$0 { scrubSeconds = nil } }
     }
 
     // MARK: Panels
@@ -101,10 +113,12 @@ struct PlayerView: View {
                 .frame(height: 24)
             }
             .buttonStyle(IconButtonStyle(isActive: true))
+            .help("Back to player (Esc)")
             .accessibilityLabel("Back to player")
             .padding(.bottom, 8)
 
-            SettingsView()
+            SettingsView(notificationsDenied: model.notificationsDenied,
+                         openNotificationSettings: model.openNotificationSettings)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, Self.padding)
@@ -132,7 +146,7 @@ struct PlayerView: View {
                 .frame(width: 24, height: 24, alignment: .trailing)
         }
         .buttonStyle(IconButtonStyle())
-        .help("Settings")
+        .help("Settings (⌘,)")
         .accessibilityLabel("Settings")
     }
 
@@ -145,21 +159,50 @@ struct PlayerView: View {
         withAnimation(PlayerTheme.medium) { showSettings.toggle() }
     }
 
+    /// True while the Spotify process exists, even before it answers Apple Events.
+    private var spotifyAppearsRunning: Bool { preview?.connecting ?? model.spotifyRunning }
+
+    /// Puts the window back to the player, for the next time it opens.
+    private func resetForNextOpen() {
+        showSettings = false
+        hoveringCover = false
+        scrubSeconds = nil
+        coverNote = nil
+        session += 1
+    }
+
     // MARK: Status screens
 
     @ViewBuilder private var statusScreen: some View {
         switch status {
         case .ready:
             EmptyView()
+        case .notRunning where model.isLaunching:
+            StatusMessage(
+                symbol: "music.note",
+                title: "Starting Spotify…",
+                detail: "The player shows up here once Spotify is ready"
+            ) {
+                EmptyView()
+            }
+        case .notRunning where spotifyAppearsRunning:
+            // Running but not answering yet: still starting, on its login screen, or busy.
+            StatusMessage(
+                symbol: "music.note",
+                title: "Connecting to Spotify…",
+                detail: "If Spotify shows a login screen, sign in there"
+            ) {
+                Button("Show Spotify", action: model.showInSpotify)
+                    .buttonStyle(TextButtonStyle())
+            }
         case .notRunning:
             StatusMessage(
                 symbol: "music.note",
                 title: "Spotify isn't running",
                 detail: "Open it to see what's playing and control it from the menu bar"
             ) {
-                Button(model.isLaunching ? "Starting Spotify…" : "Open Spotify", action: model.openSpotify)
+                Button("Open Spotify", action: model.openSpotify)
                     .buttonStyle(PillButtonStyle())
-                    .disabled(model.isLaunching)
             }
         case .notInstalled:
             StatusMessage(
@@ -167,14 +210,9 @@ struct PlayerView: View {
                 title: "Spotify isn't installed",
                 detail: "Tonearm works with the Spotify desktop app"
             ) {
-                Button {
-                    if let url = URL(string: "https://www.spotify.com/download") {
-                        NSWorkspace.shared.open(url)
-                    }
-                } label: {
-                    Text("Get it at spotify.com/download").underline()
-                }
-                .buttonStyle(TextButtonStyle())
+                Button("Get Spotify") { NSWorkspace.shared.open(Onboarding.spotifyDownloadURL) }
+                    .buttonStyle(PillButtonStyle())
+                    .help("Opens spotify.com/download")
             }
         case .notAuthorized where model.isAskingPermission:
             StatusMessage(
@@ -188,9 +226,9 @@ struct PlayerView: View {
             StatusMessage(
                 symbol: "lock.fill",
                 title: "Tonearm needs permission",
-                detail: "Allow Tonearm to control Spotify in System Settings, then try again"
+                detail: "Turn on Spotify under Tonearm in Privacy & Security › Automation, then try again"
             ) {
-                Button("Open Automation Settings", action: model.openAutomationSettings)
+                Button("Open System Settings", action: model.openAutomationSettings)
                     .buttonStyle(PillButtonStyle())
                 Button("Try again", action: model.requestPermission)
                     .buttonStyle(TextButtonStyle())
@@ -252,7 +290,7 @@ struct PlayerView: View {
 
     @ViewBuilder private var coverMenu: some View {
         Button("Open in Spotify", action: model.showInSpotify)
-        Button("Copy Song Link", action: copyLink)
+        Button("Copy song link", action: copyLink)
             .disabled(model.trackURL == nil)
     }
 
@@ -279,12 +317,14 @@ struct PlayerView: View {
                     enabled: model.track != nil,
                     action: model.showInSpotify
                 )
-                .help("Open in Spotify")
+                // The full title, for one cut short.
+                .help(model.track?.title ?? "")
                 Text(model.track?.artist ?? "Play something in Spotify")
                     .font(.system(size: artistSize))
                     .foregroundColor(PlayerTheme.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .help(model.track?.artist ?? "")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .id(trackKey)
@@ -325,8 +365,14 @@ struct PlayerView: View {
 
     // MARK: Progress
 
+    /// Redraws the playhead twice a second while a song plays in an open window, and not at all
+    /// otherwise. Model changes (seek, pause, a new song) redraw it anyway.
+    private var playheadSchedule: AnimationTimelineSchedule {
+        .animation(minimumInterval: 0.5, paused: isSnapshot || !model.isPlaying || !model.popoverVisible)
+    }
+
     private var progress: some View {
-        TimelineView(.periodic(from: .now, by: 0.5)) { context in
+        TimelineView(playheadSchedule) { context in
             let head = playhead(at: context.date)
             let position = head.position
             let duration = head.duration
@@ -334,7 +380,7 @@ struct PlayerView: View {
             VStack(spacing: 4) {
                 progressBar(position: position, duration: duration)
                 HStack {
-                    Text(PlayerTheme.time(shown))
+                    Text(PlayerTheme.time(shown, hours: duration >= 3600))
                     Spacer()
                     Text(remaining(shown, duration))
                 }
@@ -343,17 +389,17 @@ struct PlayerView: View {
                 .accessibilityHidden(true)
             }
         }
-        .disabled(model.track == nil)
+        .disabled(!canSeek)
     }
 
     private var compactProgress: some View {
-        TimelineView(.periodic(from: .now, by: 0.5)) { context in
+        TimelineView(playheadSchedule) { context in
             let head = playhead(at: context.date)
             let position = head.position
             let duration = head.duration
             let shown = scrubSeconds ?? position
             HStack(spacing: 8) {
-                Text(PlayerTheme.time(shown))
+                Text(PlayerTheme.time(shown, hours: duration >= 3600))
                     .frame(minWidth: 28, alignment: .leading)
                     .accessibilityHidden(true)
                 progressBar(position: position, duration: duration)
@@ -364,8 +410,11 @@ struct PlayerView: View {
             .font(.system(size: 11).monospacedDigit())
             .foregroundColor(PlayerTheme.textSecondary)
         }
-        .disabled(model.track == nil)
+        .disabled(!canSeek)
     }
+
+    /// Seeking needs a song of known length; with no duration every click would jump to 0.
+    private var canSeek: Bool { model.track != nil && (model.track?.duration ?? 0) > 0 }
 
     private func playhead(at date: Date) -> (position: Double, duration: Double) {
         let duration = max(model.track?.duration ?? 0, 0)
@@ -389,6 +438,8 @@ struct PlayerView: View {
                 model.seek(to: v * duration)
             }
         )
+        // A new song drops a drag in progress, so it never seeks the wrong song.
+        .id(trackKey)
     }
 
     // MARK: Controls
@@ -400,7 +451,7 @@ struct PlayerView: View {
                 Image(systemName: "shuffle")
             }
             .buttonStyle(ModeButtonStyle(isOn: shuffling))
-            .help("Shuffle")
+            .help(shuffling ? "Shuffle is on (S)" : "Shuffle (S)")
             .accessibilityLabel("Shuffle")
             .accessibilityValue(shuffling ? "On" : "Off")
             // Lines the glyph up with the edge of the progress bar.
@@ -415,6 +466,7 @@ struct PlayerView: View {
                         .frame(width: 32, height: 32)
                 }
                 .buttonStyle(IconButtonStyle())
+                .help("Previous (⌘←)")
                 .accessibilityLabel("Previous track")
 
                 Button(action: model.playPause) {
@@ -422,6 +474,7 @@ struct PlayerView: View {
                         .font(.system(size: compact ? 15 : 18, weight: .bold))
                 }
                 .buttonStyle(PlayButtonStyle(diameter: compact ? 36 : 44))
+                .help(model.isPlaying ? "Pause (Space)" : "Play (Space)")
                 .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
 
                 Button(action: model.next) {
@@ -430,6 +483,7 @@ struct PlayerView: View {
                         .frame(width: 32, height: 32)
                 }
                 .buttonStyle(IconButtonStyle())
+                .help("Next (⌘→)")
                 .accessibilityLabel("Next track")
             }
 
@@ -439,7 +493,7 @@ struct PlayerView: View {
                 Image(systemName: "repeat")
             }
             .buttonStyle(ModeButtonStyle(isOn: repeating))
-            .help("Repeat")
+            .help(repeating ? "Repeat is on (R)" : "Repeat (R)")
             .accessibilityLabel("Repeat")
             .accessibilityValue(repeating ? "On" : "Off")
             .padding(.trailing, -8)
@@ -455,6 +509,7 @@ struct PlayerView: View {
                     .frame(width: 20, height: 20, alignment: .leading)
             }
             .buttonStyle(IconButtonStyle())
+            .help(level == 0 ? "Unmute" : "Mute")
             .accessibilityLabel(level == 0 ? "Unmute" : "Mute")
 
             ScrubBar(
@@ -489,20 +544,28 @@ struct PlayerView: View {
 
     // MARK: Keyboard
 
+    // A MenuBarExtra window does not reliably call onAppear and onDisappear after the first
+    // open, so these also follow `model.popoverVisible`. Both are safe to call twice.
+
     private func appeared() {
         guard !isSnapshot else { return }
         model.popoverVisible = true
-        keys.start(handle)
+        keys.start(window: { model.popoverWindow }, handle)
     }
 
     private func disappeared() {
         guard !isSnapshot else { return }
         model.popoverVisible = false
         keys.stop()
+        resetForNextOpen()
     }
 
     private func handle(_ command: KeyCommand) -> Bool {
         switch command {
+        case .back:
+            // Outside settings, Escape goes on to the window, which closes.
+            guard showSettings else { return false }
+            toggleSettings()
         case .playPause: model.playPause()
         case .seekBack: model.seek(by: -KeyCommand.seekStep)
         case .seekForward: model.seek(by: KeyCommand.seekStep)

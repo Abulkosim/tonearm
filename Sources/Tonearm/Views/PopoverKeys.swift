@@ -8,6 +8,8 @@ enum KeyCommand: Equatable {
     case volumeUp, volumeDown
     case shuffle, repeating
     case settings
+    /// Escape: leaves settings. Outside settings the key goes on and closes the window.
+    case back
     case quit
 
     var repeats: Bool {
@@ -40,6 +42,7 @@ enum KeyCommand: Equatable {
             case 124: return .seekForward
             case 126: return .volumeUp
             case 125: return .volumeDown
+            case 53: return .back
             default: break
             }
             if letter("s", 1) { return .shuffle }
@@ -58,7 +61,8 @@ enum KeyCommand: Equatable {
         return nil
     }
 
-    /// Shown in settings, in this order.
+    /// Shown in settings, in this order. Keys are separated by spaces, one keycap each.
+    /// ⌘Q is left out: the Quit row in settings shows it.
     static let help: [(keys: String, action: String)] = [
         ("Space", "Play or pause"),
         ("← →", "Seek 10 s"),
@@ -67,7 +71,6 @@ enum KeyCommand: Equatable {
         ("S", "Shuffle"),
         ("R", "Repeat"),
         ("⌘,", "Settings"),
-        ("⌘Q", "Quit"),
     ]
 }
 
@@ -77,9 +80,17 @@ final class PopoverKeys {
     private var monitor: Any?
 
     /// `handle` returns true when it used the key, which then goes no further.
-    func start(_ handle: @escaping @MainActor (KeyCommand) -> Bool) {
+    /// `window` is the player's window once known; keys typed in other windows (welcome,
+    /// updates) go on untouched.
+    func start(window: @escaping @MainActor () -> NSWindow?, _ handle: @escaping @MainActor (KeyCommand) -> Bool) {
         stop()
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.window?.identifier == Onboarding.windowID { return event }
+            let elsewhere = MainActor.assumeIsolated { () -> Bool in
+                guard let player = window() else { return false }
+                return event.window !== player
+            }
+            if elsewhere { return event }
             guard let command = KeyCommand.from(keyCode: event.keyCode,
                                                 characters: event.charactersIgnoringModifiers,
                                                 modifiers: event.modifierFlags)

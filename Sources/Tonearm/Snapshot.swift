@@ -21,6 +21,10 @@ enum Snapshot {
         let compact = PlayerView.Preview(layout: .compact, shuffling: true)
         let settings = PlayerView.Preview(settingsOpen: true)
         let notRunning = PlayerView.Preview(status: .notRunning)
+        let longTitleBar = AppSettings(defaults: UserDefaults(suiteName: "tonearm.snapshot") ?? .standard)
+        longTitleBar.menuBarStyle = .songTitle
+        longTitleBar.showArtist = true
+        longTitleBar.maxTitleLength = AppSettings.defaultTitleLength
         let shots: [(String, AnyView)] = [
             ("player-playing", player(.playing, playing)),
             ("player-paused", player(.paused)),
@@ -33,49 +37,83 @@ enum Snapshot {
             ("nothing-playing", player(.stopped)),
             ("not-running", player(nil, notRunning)),
             ("not-authorized", player(nil, .init(status: .notAuthorized))),
+            ("connecting", player(nil, .init(status: .notRunning, connecting: true))),
             ("not-installed", player(nil, .init(status: .notInstalled))),
             ("waiting-for-permission", player(nil, askingPermission: true)),
-            ("framed-player", framed(player(.playing, playing))),
-            ("framed-player-warm", framed(player(.playing, playing, cover: .warm))),
-            ("framed-compact", framed(player(.playing, compact))),
-            ("framed-settings", framed(player(.playing, settings))),
-            ("framed-not-running", framed(player(nil, notRunning))),
+            ("framed-player", framed(model(.playing), playing)),
+            ("framed-player-warm", framed(model(.playing, cover: .warm), playing)),
+            ("framed-compact", framed(model(.playing), compact)),
+            ("framed-settings", framed(model(.playing), settings)),
+            ("framed-not-running", framed(model(nil), notRunning)),
+            ("player-long-title", player(.playing, playing, track: .long)),
+            ("compact-long-title", player(.playing, compact, track: .long)),
+            ("framed-long-title", framed(model(.playing, track: .long), playing, bar: longTitleBar)),
+            ("welcome", welcome(spotifyInstalled: true)),
+            ("welcome-no-spotify", welcome(spotifyInstalled: false)),
+            ("framed-welcome", framedWelcome()),
         ]
         for (name, view) in shots {
             write(view, to: url.appendingPathComponent("\(name).png"))
         }
     }
 
+    /// Sample songs: an ordinary one, and a long Cyrillic title and artist to check cutting.
+    enum SampleTrack {
+        case standard, long
+
+        var track: Track {
+            switch self {
+            case .standard:
+                return Track(id: "spotify:track:0000000000000000000000", title: "Sample Song Title",
+                             artist: "Sample Artist", album: "Sample Album", artworkURL: nil, duration: 214)
+            case .long:
+                return Track(id: "spotify:track:1111111111111111111111",
+                             title: "Песня о далёкой звезде над ночным городом (Remastered 2024)",
+                             artist: "Оркестр Северного ветра, Александра Константинопольская",
+                             album: "Длинная дорога домой: концерт в Большом зале консерватории",
+                             artworkURL: nil, duration: 3725)
+            }
+        }
+    }
+
     @MainActor
     private static func player(_ state: PlayState?, _ preview: PlayerView.Preview = .init(),
-                               cover: SampleCover = .teal, askingPermission: Bool = false) -> AnyView {
+                               cover: SampleCover = .teal, track sample: SampleTrack = .standard,
+                               askingPermission: Bool = false) -> AnyView {
+        AnyView(PlayerView(preview: preview).environmentObject(
+            model(state, cover: cover, track: sample, askingPermission: askingPermission)
+        ))
+    }
+
+    @MainActor
+    private static func model(_ state: PlayState?, cover: SampleCover = .teal, track sample: SampleTrack = .standard,
+                              askingPermission: Bool = false) -> PlayerModel {
         let model = PlayerModel(live: false)
         if askingPermission { model.setPreviewAskingPermission() }
         if let state {
-            let track = state == .stopped ? nil : Track(
-                id: "spotify:track:0000000000000000000000", title: "Sample Song Title",
-                artist: "Sample Artist", album: "Sample Album", artworkURL: nil, duration: 214
-            )
+            let track = state == .stopped ? nil : sample.track
             model.setPreview(
                 Playback(state: state, track: track, position: track == nil ? 0 : 83, volume: 70),
                 artwork: track == nil ? nil : sampleArtwork(cover)
             )
         }
-        return AnyView(PlayerView(preview: preview).environmentObject(model))
+        return model
     }
 
-    /// Puts the popover under a mock menu bar on a plain desktop, the way people see it.
+    private static let desktop = LinearGradient(
+        colors: [Color(red: 0.36, green: 0.40, blue: 0.45), Color(red: 0.17, green: 0.19, blue: 0.23)],
+        startPoint: .topLeading, endPoint: .bottomTrailing
+    )
+
+    /// A mock menu bar: Tonearm's real label on the left, highlighted like an open item,
+    /// and a few system items on the right.
     @MainActor
-    private static func framed(_ popover: AnyView) -> AnyView {
-        let margin: CGFloat = 56
-        let menuBar = HStack(spacing: 16) {
-            HStack(spacing: 4) {
-                Image(systemName: "music.note")
-                Text("Sample Song Title")
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 22)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.white.opacity(0.22)))
+    private static func menuBar<Label: View>(leading: CGFloat, @ViewBuilder label: () -> Label) -> some View {
+        HStack(spacing: 16) {
+            label()
+                .padding(.horizontal, 8)
+                .frame(height: 22)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.white.opacity(0.22)))
             Spacer(minLength: 0)
             Image(systemName: "wifi")
             Image(systemName: "battery.75")
@@ -83,18 +121,24 @@ enum Snapshot {
         }
         .font(.system(size: 13, weight: .medium))
         .foregroundColor(.white)
-        .padding(.leading, margin - 8)
+        .lineLimit(1)
+        .padding(.leading, leading)
         .padding(.trailing, 16)
         .frame(height: 28)
         .background(Color.black.opacity(0.25))
+    }
 
-        let desktop = LinearGradient(
-            colors: [Color(red: 0.36, green: 0.40, blue: 0.45), Color(red: 0.17, green: 0.19, blue: 0.23)],
-            startPoint: .topLeading, endPoint: .bottomTrailing
-        )
+    /// Puts the popover under a mock menu bar on a plain desktop, the way people see it.
+    /// `bar` sets the menu bar title options; the label comes from `MenuBarLabel`.
+    @MainActor
+    private static func framed(_ model: PlayerModel, _ preview: PlayerView.Preview,
+                               bar: AppSettings? = nil) -> AnyView {
+        let margin: CGFloat = 56
+        let settings = bar ?? plainBar()
+        let popover = PlayerView(preview: preview).environmentObject(model)
         return AnyView(
             VStack(alignment: .leading, spacing: 0) {
-                menuBar
+                menuBar(leading: margin - 8) { MenuBarLabel(model: model, settings: settings) }
                 popover
                     .popoverWindowShape()
                     .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
@@ -103,6 +147,76 @@ enum Snapshot {
                     .padding(.bottom, margin)
             }
             .frame(width: 300 + margin * 2, alignment: .leading)
+            .background(desktop)
+            .environment(\.colorScheme, .dark)
+        )
+    }
+
+    /// Default menu bar options: song title without the artist.
+    private static func plainBar() -> AppSettings {
+        let settings = AppSettings(defaults: UserDefaults(suiteName: "tonearm.snapshot.plain") ?? .standard)
+        settings.menuBarStyle = .songTitle
+        settings.showArtist = false
+        settings.maxTitleLength = AppSettings.defaultTitleLength
+        return settings
+    }
+
+    @MainActor
+    private static func welcome(spotifyInstalled: Bool) -> AnyView {
+        AnyView(Onboarding.snapshotView(spotifyInstalled: spotifyInstalled))
+    }
+
+    /// The welcome window on a desktop, under the menu bar icon it points at, the way it
+    /// opens on the first launch.
+    @MainActor
+    private static func framedWelcome() -> AnyView {
+        let margin: CGFloat = 56
+        let width = WelcomeView.width + margin * 2
+        // The real icon sits right above the sketched one, like `WelcomeWindowController.place`.
+        let iconFromRight = margin + WelcomeView.arrowTipFromRight
+        let window = Onboarding.snapshotView(spotifyInstalled: true)
+            .overlay(alignment: .topLeading) {
+                // Only the close button: the other two are hidden.
+                Circle()
+                    .fill(Color(red: 1, green: 0.37, blue: 0.34))
+                    .frame(width: 12, height: 12)
+                    .padding(.leading, 12)
+                    .padding(.top, 12)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
+            .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
+
+        let bar = HStack(spacing: 0) {
+            Spacer(minLength: 0)
+            Image(systemName: MenuBarLabel.appGlyph)
+                .frame(width: 28, height: 22)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.white.opacity(0.22)))
+                .padding(.trailing, iconFromRight - 14)
+        }
+        .overlay(alignment: .trailing) {
+            HStack(spacing: 16) {
+                Image(systemName: "wifi")
+                Image(systemName: "battery.75")
+                Text("Tue 10:42")
+            }
+            .padding(.trailing, 16)
+        }
+        .font(.system(size: 13, weight: .medium))
+        .foregroundColor(.white)
+        .frame(height: 28)
+        .background(Color.black.opacity(0.25))
+
+        return AnyView(
+            VStack(spacing: 0) {
+                bar
+                window
+                    .padding(.top, 12)
+                    .padding(.horizontal, margin)
+                    .padding(.bottom, margin)
+            }
+            .frame(width: width)
             .background(desktop)
             .environment(\.colorScheme, .dark)
         )

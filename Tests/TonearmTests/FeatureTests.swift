@@ -91,6 +91,22 @@ final class TrackNotifierTests: XCTestCase {
         // `swift test` runs inside xctest, not Tonearm.app.
         XCTAssertFalse(TrackNotifier.isAvailable)
     }
+
+    func testBlockedOnlyWhenWantedAndDenied() {
+        XCTAssertTrue(TrackNotifier.isBlocked(settingOn: true, authorization: .denied))
+        XCTAssertFalse(TrackNotifier.isBlocked(settingOn: false, authorization: .denied))
+        XCTAssertFalse(TrackNotifier.isBlocked(settingOn: true, authorization: .allowed))
+        XCTAssertFalse(TrackNotifier.isBlocked(settingOn: true, authorization: .notDetermined))
+        XCTAssertFalse(TrackNotifier.isBlocked(settingOn: true, authorization: .unavailable))
+    }
+
+    @MainActor
+    func testAuthorizationOutsideAnAppBundle() {
+        var answer: TrackNotifier.Authorization?
+        TrackNotifier.authorization { answer = $0 }
+        // Outside an app bundle it answers at once, without touching UNUserNotificationCenter.
+        XCTAssertEqual(answer, .unavailable)
+    }
 }
 
 final class SettingsTests: XCTestCase {
@@ -124,6 +140,17 @@ final class SettingsTests: XCTestCase {
         XCTAssertTrue(again.notifyOnTrackChange)
     }
 
+    func testShorterDefaultTitleLength() {
+        XCTAssertEqual(AppSettings.defaultTitleLength, 24)
+        XCTAssertEqual(AppSettings(defaults: defaults).maxTitleLength, 24)
+        XCTAssertTrue(AppSettings.titleLengthRange.contains(AppSettings.defaultTitleLength))
+    }
+
+    func testStoredTitleLengthIsKept() {
+        defaults.set(30, forKey: "maxTitleLength")
+        XCTAssertEqual(AppSettings(defaults: defaults).maxTitleLength, 30)
+    }
+
     func testUnknownLayoutFallsBack() {
         defaults.set("huge", forKey: "layout")
         XCTAssertEqual(AppSettings(defaults: defaults).layout, .large)
@@ -153,6 +180,60 @@ final class MenuBarTitleTests: XCTestCase {
         XCTAssertEqual(HotKeys.Action.playPause.keyCode, 0x23)
         XCTAssertEqual(HotKeys.Action.next.keyCode, 0x2D)
         XCTAssertEqual(HotKeys.Action.previous.keyCode, 0x0B)
+    }
+}
+
+final class PollPolicyTests: XCTestCase {
+    private func interval(running: Bool = true, open: Bool, playing: Bool, ready: Bool = true) -> TimeInterval? {
+        PollPolicy.interval(spotifyRunning: running, windowOpen: open, playing: playing, ready: ready)
+    }
+
+    func testWindowOpen() {
+        XCTAssertEqual(interval(open: true, playing: true), 2)
+        XCTAssertEqual(interval(open: true, playing: false), 5)
+        // Not answering yet (starting, no permission): check now and then.
+        XCTAssertEqual(interval(open: true, playing: true, ready: false), 5)
+    }
+
+    func testWindowClosed() {
+        // Spotify's notification keeps the label current; paused Spotify is never polled.
+        XCTAssertNil(interval(open: false, playing: false))
+        XCTAssertNil(interval(open: false, playing: true, ready: false))
+        XCTAssertEqual(interval(open: false, playing: true), 30)
+    }
+
+    func testNoPollingWithoutSpotify() {
+        XCTAssertNil(interval(running: false, open: true, playing: true))
+        XCTAssertNil(interval(running: false, open: false, playing: true))
+    }
+
+    func testQuietPeriod() {
+        let now = Date(timeIntervalSinceReferenceDate: 500)
+        let earlier = now.addingTimeInterval(1)
+        XCTAssertEqual(PollPolicy.quietUntil(after: .paused, now: now, current: .distantPast),
+                       now.addingTimeInterval(PollPolicy.quietPeriod))
+        XCTAssertEqual(PollPolicy.quietUntil(after: .stopped, now: now, current: .distantPast),
+                       now.addingTimeInterval(PollPolicy.quietPeriod))
+        XCTAssertEqual(PollPolicy.quietUntil(after: .playing, now: now, current: earlier), .distantPast)
+        XCTAssertEqual(PollPolicy.quietUntil(after: nil, now: now, current: earlier), earlier)
+        XCTAssertGreaterThanOrEqual(PollPolicy.quietPeriod, 1.5)
+    }
+}
+
+final class PopoverWindowTests: XCTestCase {
+    private func isPopover(_ name: String, _ bundle: String?) -> Bool {
+        PlayerModel.isPopoverWindow(className: name, classBundleID: bundle)
+    }
+
+    func testOnlySwiftUIsOwnWindow() {
+        XCTAssertTrue(isPopover("SwiftUI.MenuBarExtraWindow", "com.apple.SwiftUI"))
+        XCTAssertTrue(isPopover("MenuBarExtraWindow", nil))
+        XCTAssertTrue(isPopover("SomePanel", "com.apple.SwiftUI"))
+        // The status item, the welcome window, alerts and update windows.
+        XCTAssertFalse(isPopover("NSStatusBarWindow", "com.apple.AppKit"))
+        XCTAssertFalse(isPopover("Tonearm.WelcomeWindow", "io.github.abulkosim.tonearm"))
+        XCTAssertFalse(isPopover("NSPanel", "com.apple.AppKit"))
+        XCTAssertFalse(isPopover("SUUpdateAlertWindow", "org.sparkle-project.Sparkle"))
     }
 }
 
@@ -203,6 +284,16 @@ final class PlayerModelCommandTests: XCTestCase {
         m.setPreviewAskingPermission()
         XCTAssertTrue(m.isAskingPermission)
         XCTAssertEqual(m.status, .notAuthorized)
+    }
+
+    func testIdleStateForTheView() {
+        let m = PlayerModel(live: false)
+        XCTAssertFalse(m.spotifyRunning)
+        XCTAssertFalse(m.notificationsDenied)
+        XCTAssertNil(m.popoverWindow)
+        // Not live: never launches anything.
+        m.openSpotify()
+        XCTAssertFalse(m.isLaunching)
     }
 
     func testTrackURL() {
