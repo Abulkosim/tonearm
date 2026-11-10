@@ -24,6 +24,8 @@ jobs:
           persist-credentials: false
       - name: Toolchain
         run: swift --version && sw_vers
+      - name: Test
+        run: swift test
       - name: Build app
         run: scripts/build-app.sh
       - name: Render snapshot
