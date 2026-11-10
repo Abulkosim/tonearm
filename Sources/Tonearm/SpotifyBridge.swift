@@ -22,6 +22,38 @@ struct Playback: Equatable {
     var position: Double
     /// 0...100
     var volume: Int
+    var shuffling = false
+    var repeating = false
+}
+
+/// Turns Spotify ids into links people can open in a browser.
+enum SpotifyLink {
+    /// Kinds of item that have a public page on open.spotify.com.
+    static let shareableKinds: Set<String> = ["track", "episode", "album", "artist", "playlist", "show"]
+
+    /// "spotify:track:XYZ" -> https://open.spotify.com/track/XYZ. Also accepts an
+    /// open.spotify.com URL. Local files, ads and anything unknown give nil.
+    static func webURL(for id: String) -> URL? {
+        let id = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        if id.hasPrefix("https://open.spotify.com/") { return URL(string: id) }
+        let parts = id.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 3, parts[0] == "spotify", shareableKinds.contains(String(parts[1])) else {
+            return nil
+        }
+        let key = parts[2]
+        guard !key.isEmpty, key.unicodeScalars.allSatisfy({ $0.isASCII && CharacterSet.alphanumerics.contains($0) })
+        else { return nil }
+        return URL(string: "https://open.spotify.com/\(parts[1])/\(key)")
+    }
+
+    /// Cover URL Tonearm can load. Upgrades http to https (App Transport Security blocks
+    /// plain http) and drops anything that is not a web URL, such as local file art.
+    static func artworkURL(_ raw: String) -> URL? {
+        var raw = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.lowercased().hasPrefix("http://") { raw = "https://" + raw.dropFirst("http://".count) }
+        guard raw.lowercased().hasPrefix("https://"), let url = URL(string: raw), url.host != nil else { return nil }
+        return url
+    }
 }
 
 enum BridgeError: Error, Equatable {
@@ -60,14 +92,16 @@ struct NowPlayingUpdate: Equatable {
               let state = PlayState(rawValue: rawState.lowercased())
         else { return nil }
         var update = NowPlayingUpdate(state: state, track: nil, position: number(info["Playback Position"]))
-        if let id = info["Track ID"] as? String, !id.isEmpty, state != .stopped {
+        let id = info["Track ID"] as? String ?? ""
+        let name = info["Name"] as? String ?? ""
+        if state != .stopped, !(id.isEmpty && name.isEmpty) {
             update.track = Track(
                 id: id,
-                title: info["Name"] as? String ?? "",
+                title: name,
                 artist: info["Artist"] as? String ?? "",
                 album: info["Album"] as? String ?? "",
                 artworkURL: nil,
-                duration: (number(info["Duration"]) ?? 0) / 1000
+                duration: max(0, (number(info["Duration"]) ?? 0) / 1000)
             )
         }
         return update
@@ -75,12 +109,20 @@ struct NowPlayingUpdate: Equatable {
 
     private static func number(_ value: Any?) -> Double? {
         switch value {
-        case let n as NSNumber: return n.doubleValue
-        case let s as String: return Double(s.replacingOccurrences(of: ",", with: "."))
+        case let n as NSNumber: return finiteOrNil(n.doubleValue)
+        case let s as String: return parseNumber(s)
         default: return nil
         }
     }
 }
+
+/// Parses "12.5", "12,5" and " 12 " the same way in every locale. Nil for junk, NaN and infinity.
+func parseNumber(_ s: String) -> Double? {
+    let t = s.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: ",", with: ".")
+    return Double(t).flatMap(finiteOrNil)
+}
+
+func finiteOrNil(_ x: Double) -> Double? { x.isFinite ? x : nil }
 
 /// Local model of the playhead: a position anchored at a date, advanced by wall-clock time while playing.
 struct PositionClock: Equatable {
@@ -120,38 +162,57 @@ final class SpotifyBridge {
         case playPause, next, previous
         case seek(Double)
         case volume(Int)
+        case shuffle(Bool)
+        case repeating(Bool)
 
         var appleScript: String {
             switch self {
             case .playPause: return "playpause"
             case .next: return "next track"
             case .previous: return "previous track"
-            case .seek(let s): return "set player position to \(max(0, s))"
-            case .volume(let v): return "set sound volume to \(min(100, max(0, v)))"
+            case .seek(let s):
+                // AppleScript source always uses a dot for decimals. String(format:) without a
+                // locale does too, and never switches to exponent notation.
+                return "set player position to " + String(format: "%.2f", s.isFinite ? max(0, s) : 0)
+            case .volume(let v): return "set sound volume to \(SpotifyBridge.clampVolume(v))"
+            case .shuffle(let on): return "set shuffling to \(on)"
+            case .repeating(let on): return "set repeating to \(on)"
             }
         }
     }
 
     enum Permission: Equatable {
         case granted, denied, notRunning
+        /// The user has not decided yet (errAEEventWouldRequireUserConsent, from an `ask: false` check).
+        case needsConsent
         /// AEDeterminePermissionToAutomateTarget gave an unexpected status; fall back to AppleScript.
         case unknown(Int32)
 
         static func from(_ status: OSStatus) -> Permission {
             switch status {
             case 0: return .granted
-            case -1743, -1744: return .denied
+            case -1743: return .denied
+            case -1744: return .needsConsent
             case -600: return .notRunning
             default: return .unknown(status)
             }
         }
     }
 
-    private let queue = DispatchQueue(label: "tonearm.applescript", qos: .userInitiated)
+    /// Serial, so Apple Events never overlap. `.workItem` drains the autorelease pool after
+    /// every script; the default only drains when the thread goes idle, which polling can delay.
+    private let queue = DispatchQueue(label: "tonearm.applescript", qos: .userInitiated,
+                                      autoreleaseFrequency: .workItem)
     // Only touched on `queue`.
     private var readScript: NSAppleScript?
+    private var commandScripts: [String: NSAppleScript] = [:]
     private var authorized = false
 
+    /// Called with true just before macOS may show its Automation prompt, and with false
+    /// once the user answered. Runs on the main actor. Set it once, before the first fetch.
+    var permissionPromptChanged: (@MainActor (Bool) -> Void)?
+
+    /// Safe on any thread.
     var isRunning: Bool {
         NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleID).contains { !$0.isTerminated }
     }
@@ -162,22 +223,66 @@ final class SpotifyBridge {
 
     static let notRunningReply = "tonearm:not-running"
 
-    static let readSource = """
-    if application id "com.spotify.client" is not running then return "\(notRunningReply)"
-    tell application id "com.spotify.client"
-        with timeout of 5 seconds
-            set s to player state as string
-            set p to player position
-            set v to sound volume
-            if s is "stopped" then return {s, p, v}
-            try
-                set t to current track
-                return {s, p, v, id of t, name of t, artist of t, album of t, artwork url of t, duration of t}
-            end try
-            return {s, p, v}
-        end timeout
-    end tell
-    """
+    /// Apple Event errors that must reach Swift instead of being swallowed by a `try` in the
+    /// script: timeout, permission, and Spotify going away.
+    static let fatalErrorNumbers = [-1712, -1743, -1744, -600, -609, -903]
+
+    /// Reply layout: {state, position, volume, shuffling, repeating} and, when there is a
+    /// current track, {id, name, artist, album, artwork url, duration ms} after that.
+    /// Optional properties are read one by one, so a podcast, ad or local file that lacks
+    /// one still shows the rest.
+    static let readSource: String = {
+        let fatal = SpotifyBridge.fatalErrorNumbers.map { String($0) }.joined(separator: ", ")
+        func get(_ variable: String, _ expression: String, default value: String) -> String {
+            """
+                    set \(variable) to \(value)
+                    try
+                        set \(variable) to \(expression)
+                    on error number n
+                        if n is in {\(fatal)} then error number n
+                    end try
+
+            """
+        }
+        let head = """
+        if application id "com.spotify.client" is not running then return "\(SpotifyBridge.notRunningReply)"
+        tell application id "com.spotify.client"
+            with timeout of 5 seconds
+                set s to player state as string
+                set p to player position
+                set v to sound volume
+
+        """
+        let currentTrack = """
+                if s is "stopped" then return {s, p, v, sh, rp}
+                try
+                    set t to current track
+                on error number n
+                    if n is in {\(fatal)} then error number n
+                    return {s, p, v, sh, rp}
+                end try
+
+        """
+        let tail = """
+                return {s, p, v, sh, rp, tid, tn, ta, tal, tu, td}
+            end timeout
+        end tell
+        """
+        let parts: [String] = [
+            head,
+            get("sh", "shuffling", default: "false"),
+            get("rp", "repeating", default: "false"),
+            currentTrack,
+            get("tid", "id of t", default: "\"\""),
+            get("tn", "name of t", default: "\"\""),
+            get("ta", "artist of t", default: "\"\""),
+            get("tal", "album of t", default: "\"\""),
+            get("tu", "artwork url of t", default: "\"\""),
+            get("td", "duration of t", default: "0"),
+            tail,
+        ]
+        return parts.joined()
+    }()
 
     static func source(for command: Command) -> String {
         """
@@ -198,6 +303,11 @@ final class SpotifyBridge {
         queue.async {
             let result: Result<Playback, BridgeError>
             let start = Date()
+            // Spotify may have quit while this waited in the queue. Sending to a process that
+            // just died makes AppleScript relaunch it, so check again right before.
+            guard self.isRunning else {
+                return DispatchQueue.main.async { done(.failure(.notRunning), start) }
+            }
             if let denied = self.ensurePermission() {
                 result = .failure(denied)
             } else {
@@ -210,10 +320,17 @@ final class SpotifyBridge {
         }
     }
 
+    /// Sends a command. `done` always runs on the main queue, even when Spotify is not
+    /// running, so callers that track an in-flight send never get stuck.
     func send(_ command: Command, then done: (() -> Void)? = nil) {
-        guard isRunning else { return }
+        guard isRunning else {
+            if let done { DispatchQueue.main.async(execute: done) }
+            return
+        }
         queue.async {
-            _ = Self.execute(NSAppleScript(source: Self.source(for: command)))
+            if self.isRunning {
+                _ = Self.execute(self.script(for: command))
+            }
             if let done { DispatchQueue.main.async(execute: done) }
         }
     }
@@ -224,19 +341,21 @@ final class SpotifyBridge {
     func checkPermission(ask: Bool, _ done: @escaping (Permission) -> Void) {
         guard isRunning else { return done(.notRunning) }
         queue.async {
-            let p = Self.determinePermission(ask: ask)
+            var p = Self.determinePermission(ask: false)
+            if ask, p == .needsConsent { p = self.askForPermission() }
             self.authorized = p == .granted
             DispatchQueue.main.async { done(p) }
         }
     }
 
-    /// Launches Spotify in the background. Calls back on the main queue with success.
-    func launch(_ done: @escaping (Bool) -> Void) {
+    /// Launches Spotify, in the background unless `activate`. If it is already running,
+    /// `activate` brings it to the front and reopens its window. Calls back on the main queue.
+    func launch(activate: Bool = false, _ done: @escaping (Bool) -> Void) {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.bundleID) else {
             return done(false)
         }
         let config = NSWorkspace.OpenConfiguration()
-        config.activates = false
+        config.activates = activate
         NSWorkspace.shared.openApplication(at: url, configuration: config) { app, error in
             let ok = app != nil && error == nil
             DispatchQueue.main.async { done(ok) }
@@ -251,10 +370,30 @@ final class SpotifyBridge {
 
     // MARK: Private
 
-    /// Runs on `queue`. Returns an error if the script must not run.
+    /// Runs on `queue`. Compiled once per command text; seek and volume values vary, so
+    /// those are compiled each time and not kept.
+    private func script(for command: Command) -> NSAppleScript? {
+        let source = Self.source(for: command)
+        switch command {
+        case .seek, .volume:
+            return NSAppleScript(source: source)
+        default:
+            if let cached = commandScripts[source] { return cached }
+            let script = NSAppleScript(source: source)
+            commandScripts[source] = script
+            return script
+        }
+    }
+
+    /// Runs on `queue`, never on the main thread: AEDeterminePermissionToAutomateTarget
+    /// blocks until the user answers the prompt, and can stall while Spotify is starting.
+    /// Returns an error if the script must not run.
     private func ensurePermission() -> BridgeError? {
         guard !authorized else { return nil }
-        switch Self.determinePermission(ask: true) {
+        // Ask without a prompt first. Only an undecided user gets the prompt, once.
+        var permission = Self.determinePermission(ask: false)
+        if permission == .needsConsent { permission = askForPermission() }
+        switch permission {
         case .granted:
             authorized = true
             return nil
@@ -262,10 +401,19 @@ final class SpotifyBridge {
             return .notAuthorized
         case .notRunning:
             return .notRunning
-        case .unknown:
+        case .needsConsent, .unknown:
             // Let the AppleScript call trigger the prompt itself.
             return nil
         }
+    }
+
+    /// Runs on `queue`. Shows the Automation prompt and blocks until the user answers.
+    private func askForPermission() -> Permission {
+        let changed = permissionPromptChanged
+        if let changed { Task { @MainActor in changed(true) } }
+        let permission = Self.determinePermission(ask: true)
+        if let changed { Task { @MainActor in changed(false) } }
+        return permission
     }
 
     private static func determinePermission(ask: Bool) -> Permission {
@@ -298,33 +446,41 @@ final class SpotifyBridge {
             return d.stringValue == notRunningReply
                 ? .failure(.notRunning) : .failure(.script(0, "unexpected reply"))
         }
-        guard d.numberOfItems >= 3 else { return .failure(.script(0, "unexpected reply")) }
+        guard d.numberOfItems >= 5 else { return .failure(.script(0, "unexpected reply")) }
         func item(_ i: Int) -> NSAppleEventDescriptor? { d.atIndex(i) }
         func str(_ i: Int) -> String { item(i)?.stringValue ?? "" }
         func num(_ i: Int) -> Double {
             guard let x = item(i) else { return 0 }
-            if textTypes.contains(x.descriptorType) {
-                return Double((x.stringValue ?? "").replacingOccurrences(of: ",", with: ".")) ?? 0
-            }
-            let v = x.doubleValue
-            return v.isFinite ? v : 0
+            if textTypes.contains(x.descriptorType) { return parseNumber(x.stringValue ?? "") ?? 0 }
+            return finiteOrNil(x.doubleValue) ?? 0
         }
-        let state = PlayState(rawValue: str(1)) ?? .stopped
+        func bool(_ i: Int) -> Bool {
+            guard let x = item(i) else { return false }
+            if textTypes.contains(x.descriptorType) { return x.stringValue?.lowercased() == "true" }
+            return x.booleanValue
+        }
+        let state = PlayState(rawValue: str(1).lowercased()) ?? .stopped
         var playback = Playback(state: state, track: nil, position: max(0, num(2)),
-                                volume: min(100, max(0, Int(num(3).rounded()))))
-        if d.numberOfItems >= 9, state != .stopped {
-            let art = str(8)
-            playback.track = Track(
-                id: str(4),
-                title: str(5),
-                artist: str(6),
-                album: str(7),
-                artworkURL: art.isEmpty ? nil : URL(string: art),
-                duration: num(9) / 1000
-            )
+                                volume: clampVolume(Int(num(3).rounded())),
+                                shuffling: bool(4), repeating: bool(5))
+        if d.numberOfItems >= 11, state != .stopped {
+            let id = str(6), title = str(7)
+            // Spotify with nothing loaded reports a track with every field empty.
+            if !(id.isEmpty && title.isEmpty) {
+                playback.track = Track(
+                    id: id,
+                    title: title,
+                    artist: str(8),
+                    album: str(9),
+                    artworkURL: SpotifyLink.artworkURL(str(10)),
+                    duration: max(0, num(11) / 1000)
+                )
+            }
         }
         return .success(playback)
     }
+
+    static func clampVolume(_ v: Int) -> Int { min(100, max(0, v)) }
 }
 
 /// Distributed notifications are delivered immediately even while Tonearm is inactive,
