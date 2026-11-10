@@ -48,10 +48,10 @@ done
 
 # Signatures
 codesign --verify --deep --strict --verbose=2 "$app"
-codesign -dv --entitlements - "$app" > "$work/app.txt" 2>&1
+codesign -dvv --entitlements - "$app" > "$work/app.txt" 2>&1
 grep -q 'com.apple.security.automation.apple-events' "$work/app.txt" || fail "no Apple Events entitlement"
 grep -Eq 'flags=0x[0-9a-f]+\(.*runtime' "$work/app.txt" || fail "no hardened runtime"
-codesign -dv "$fw" > "$work/fw.txt" 2>&1
+codesign -dvv "$fw" > "$work/fw.txt" 2>&1
 grep -Eq 'flags=0x[0-9a-f]+\(.*runtime' "$work/fw.txt" || fail "Sparkle.framework has no hardened runtime"
 app_authority="$(grep '^Authority=' "$work/app.txt" | head -n 1 || true)"
 fw_authority="$(grep '^Authority=' "$work/fw.txt" | head -n 1 || true)"
@@ -83,4 +83,6 @@ else
   echo "::warning::Rosetta is not available; launched $(uname -m) only"
   launched="$(uname -m)"
 fi
-echo "app ok: $version ($build), Sparkle $("$plistbuddy" -c 'Print :CFBundleShortVersionString' "$fw/Resources/Info.plist"), ${app_authority:-unsigned}, launched on $launched"
+signer="${app_authority#Authority=}"
+grep -q 'Signature=adhoc' "$work/app.txt" && signer=ad-hoc
+echo "app ok: $version ($build), Sparkle $("$plistbuddy" -c 'Print :CFBundleShortVersionString' "$fw/Resources/Info.plist"), signed by $signer, launched on $launched"

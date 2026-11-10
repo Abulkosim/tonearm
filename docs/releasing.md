@@ -67,7 +67,7 @@ How it works for users:
 - Settings > Check for Updates… checks right away and shows Sparkle's window.
 - Sparkle starts only in the real app, never for `--snapshot` or in tests. Its XPC services are removed from the bundle: they are only needed by sandboxed apps.
 
-Sparkle accepts an update only if its EdDSA signature matches `SUPublicEDKey` in the installed app. If the installed app is signed with a certificate (self-signed or Developer ID), Sparkle also checks that the new app is signed by the same certificate. Ad-hoc builds skip that second check.
+Sparkle accepts an update if its EdDSA signature matches `SUPublicEDKey` in the installed app, or, failing that, if the new app is signed with the same certificate as the installed one (same designated requirement). The new app's own code signature must be valid either way. Having both is what makes key rotation possible.
 
 ### Version numbers
 
@@ -105,14 +105,21 @@ The script makes a 20-year RSA certificate with the common name `Tonearm Self-Si
 
 ### Add the Sparkle key
 
+`SUPublicEDKey` in `Info.plist` is the public half of Tonearm's EdDSA (ed25519) key pair. `SPARKLE_ED_PRIVATE_KEY` holds the private half: base64 of the 32-byte seed, the format `generate_keys -x` exports. Set it from the exported file:
+
 ```sh
-scripts/sparkle-tools.sh /tmp/sparkle
-/tmp/sparkle/bin/generate_keys                     # prints the public key for SUPublicEDKey
-/tmp/sparkle/bin/generate_keys -x ~/.config/tonearm-signing/sparkle-ed25519.key
-gh secret set SPARKLE_ED_PRIVATE_KEY -R Abulkosim/tonearm < ~/.config/tonearm-signing/sparkle-ed25519.key
+gh secret set SPARKLE_ED_PRIVATE_KEY -R Abulkosim/tonearm < path/to/sparkle-ed25519.key
 ```
 
-`generate_keys` stores the key in your login keychain; `-x` exports it as base64 of the 32-byte ed25519 seed, which is what `SPARKLE_ED_PRIVATE_KEY` holds. The workflow passes it to `sign_update` on standard input, never as an argument, and checks that it matches `SUPublicEDKey` before signing.
+To make a new pair (see [Rotating keys](#rotating-keys) first):
+
+```sh
+scripts/sparkle-tools.sh /tmp/sparkle
+/tmp/sparkle/bin/generate_keys --account tonearm          # prints the new SUPublicEDKey
+/tmp/sparkle/bin/generate_keys --account tonearm -x sparkle-ed25519.key
+```
+
+`generate_keys` keeps the key in your login keychain. The workflow passes the key to `sign_update` on standard input, never as an argument, and checks that it matches `SUPublicEDKey` before signing.
 
 Without `SPARKLE_ED_PRIVATE_KEY` a tag still builds and publishes, with a warning, but the release has no `appcast.xml`. `releases/latest/download/appcast.xml` then returns 404 and installed copies see no update. Set the key before tagging.
 
@@ -163,7 +170,7 @@ The "Signing mode" step should print `self-signed` (or `notarized`), the "Inspec
 
 Sparkle allows changing one of the two keys at a time, never both in the same release:
 
-- **New EdDSA key** (the old one leaked or was lost): the app must be signed with a certificate (self-signed or Developer ID), and the certificate must not change in the same release. Make a new key with `generate_keys`, put its public key in `SUPublicEDKey`, set the new `SPARKLE_ED_PRIVATE_KEY`, and release. Sparkle accepts that one update because the certificate still matches; versions after it use the new key.
+- **New EdDSA key** (the old one leaked or was lost): the certificate must not change in the same release. Make a new key with `generate_keys`, put its public key in `SUPublicEDKey`, set the new `SPARKLE_ED_PRIVATE_KEY`, and release. Sparkle accepts that one update because the certificate still matches; versions after it use the new key. Sparkle's check before unpacking falls back only to a matching Developer ID team, which a self-signed certificate does not have, so with self-signing treat the EdDSA key as permanent and keep a backup.
 - **New certificate** (self-signed to Developer ID, or a leaked self-signed key): keep the same EdDSA key in that release. Sparkle accepts the update because the EdDSA signature still matches. macOS asks for the Spotify permission one more time.
 
 Changing both at once leaves installed copies unable to update; their users would have to download the new version by hand.

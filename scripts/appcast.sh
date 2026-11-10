@@ -5,7 +5,8 @@
 # Environment:
 #   VERSION                 X.Y.Z, shown to users (sparkle:shortVersionString)
 #   BUILD                   CFBundleVersion of the app in the zip (sparkle:version)
-#   TAG                     vX.Y.Z; release notes come from changelogs/$TAG.md if it exists
+#   TAG                     vX.Y.Z
+#   NOTES_FILE              release notes. Default: changelogs/$TAG.md, if it exists
 #   REPO                    owner/name on GitHub
 #   SPARKLE_ED_PRIVATE_KEY  base64 of the 32-byte ed25519 seed (generate_keys -x)
 #   SPARKLE_PUBLIC_KEY      SUPublicEDKey the app ships with; the private key must match it
@@ -40,8 +41,9 @@ pub_date="$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S +0000')"
 
 # Release notes: the changelog bullets, without the "# vX.Y.Z" title and the date line.
 notes=""
-if [ -f "changelogs/$TAG.md" ]; then
-  notes="$(tail -n +2 "changelogs/$TAG.md" | { grep -Ev '^[0-9]{4}-[0-9]{2}-[0-9]{2} ' || true; } | sed '/./,$!d')"
+notes_file="${NOTES_FILE:-changelogs/$TAG.md}"
+if [ -f "$notes_file" ]; then
+  notes="$(tail -n +2 "$notes_file" | { grep -Ev '^[0-9]{4}-[0-9]{2}-[0-9]{2} ' || true; } | sed '/./,$!d')"
 fi
 [ -n "$notes" ] || notes="See the [release notes]($release_page)."
 [[ "$notes" != *"]]>"* ]] || fail "release notes contain ]]>"

@@ -231,6 +231,9 @@ jobs:
             echo "::add-mask::$SPARKLE_ED_PRIVATE_KEY"
             public_key="$(SEED="$SPARKLE_ED_PRIVATE_KEY" scripts/ed25519-public-key.sh)"
             echo "dry run: signing with a throwaway key, public key $public_key"
+            # Use the notes of the version in Info.plist so the markdown path runs too.
+            NOTES_FILE="changelogs/v$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist).md"
+            export NOTES_FILE
           fi
           if [ "$mode" != skipped ]; then
             SPARKLE_ED_PRIVATE_KEY="$SPARKLE_ED_PRIVATE_KEY" SPARKLE_PUBLIC_KEY="$public_key" \
