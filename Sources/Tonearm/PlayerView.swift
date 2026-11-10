@@ -13,6 +13,8 @@ struct PlayerView: View {
         var coverHover = false
         /// Text of the note shown next to the cover buttons, like "Copied".
         var coverNote: String?
+        /// Spotify's process is up but has not answered yet.
+        var connecting = false
     }
 
     /// Nil in the app.
@@ -74,6 +76,7 @@ struct PlayerView: View {
             if visible { appeared() } else { disappeared() }
         }
         .onChange(of: trackKey) { _ in scrubSeconds = nil }
+        .onChange(of: canSeek) { if !$0 { scrubSeconds = nil } }
     }
 
     // MARK: Panels
@@ -155,6 +158,13 @@ struct PlayerView: View {
         withAnimation(PlayerTheme.medium) { showSettings.toggle() }
     }
 
+    /// True while the Spotify process exists, even before it answers Apple Events. Asks the
+    /// system directly, since the model's own flag is private. Never in snapshots.
+    private var spotifyAppearsRunning: Bool {
+        guard let preview else { return model.bridge.isRunning }
+        return preview.connecting
+    }
+
     /// Puts the window back to the player, for the next time it opens.
     private func resetForNextOpen() {
         showSettings = false
@@ -170,15 +180,32 @@ struct PlayerView: View {
         switch status {
         case .ready:
             EmptyView()
+        case .notRunning where model.isLaunching:
+            StatusMessage(
+                symbol: "music.note",
+                title: "Starting Spotify…",
+                detail: "The player shows up here once Spotify is ready"
+            ) {
+                EmptyView()
+            }
+        case .notRunning where spotifyAppearsRunning:
+            // Running but not answering yet: still starting, on its login screen, or busy.
+            StatusMessage(
+                symbol: "music.note",
+                title: "Connecting to Spotify…",
+                detail: "If Spotify shows a login screen, sign in there"
+            ) {
+                Button("Show Spotify", action: model.showInSpotify)
+                    .buttonStyle(TextButtonStyle())
+            }
         case .notRunning:
             StatusMessage(
                 symbol: "music.note",
                 title: "Spotify isn't running",
                 detail: "Open it to see what's playing and control it from the menu bar"
             ) {
-                Button(model.isLaunching ? "Starting Spotify…" : "Open Spotify", action: model.openSpotify)
+                Button("Open Spotify", action: model.openSpotify)
                     .buttonStyle(PillButtonStyle())
-                    .disabled(model.isLaunching)
             }
         case .notInstalled:
             StatusMessage(
@@ -356,7 +383,7 @@ struct PlayerView: View {
             VStack(spacing: 4) {
                 progressBar(position: position, duration: duration)
                 HStack {
-                    Text(PlayerTheme.time(shown))
+                    Text(PlayerTheme.time(shown, hours: duration >= 3600))
                     Spacer()
                     Text(remaining(shown, duration))
                 }
@@ -365,7 +392,7 @@ struct PlayerView: View {
                 .accessibilityHidden(true)
             }
         }
-        .disabled(model.track == nil)
+        .disabled(!canSeek)
     }
 
     private var compactProgress: some View {
@@ -375,7 +402,7 @@ struct PlayerView: View {
             let duration = head.duration
             let shown = scrubSeconds ?? position
             HStack(spacing: 8) {
-                Text(PlayerTheme.time(shown))
+                Text(PlayerTheme.time(shown, hours: duration >= 3600))
                     .frame(minWidth: 28, alignment: .leading)
                     .accessibilityHidden(true)
                 progressBar(position: position, duration: duration)
@@ -386,8 +413,11 @@ struct PlayerView: View {
             .font(.system(size: 11).monospacedDigit())
             .foregroundColor(PlayerTheme.textSecondary)
         }
-        .disabled(model.track == nil)
+        .disabled(!canSeek)
     }
+
+    /// Seeking needs a song of known length; with no duration every click would jump to 0.
+    private var canSeek: Bool { model.track != nil && (model.track?.duration ?? 0) > 0 }
 
     private func playhead(at date: Date) -> (position: Double, duration: Double) {
         let duration = max(model.track?.duration ?? 0, 0)

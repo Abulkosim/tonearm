@@ -29,11 +29,12 @@ enum PlayerTheme {
     /// Background color crossfade.
     static let slowFade = Animation.easeInOut(duration: 0.6)
 
-    /// `m:ss`, or `h:mm:ss` past an hour.
-    static func time(_ seconds: Double) -> String {
+    /// `m:ss`, or `h:mm:ss` past an hour. `hours` forces `h:mm:ss`, so elapsed and remaining
+    /// time of a long episode read alike.
+    static func time(_ seconds: Double, hours: Bool = false) -> String {
         let total = seconds.isFinite ? max(0, Int(seconds.rounded(.down))) : 0
         let h = total / 3600, m = (total % 3600) / 60, s = total % 60
-        return h > 0
+        return h > 0 || hours
             ? String(format: "%d:%02d:%02d", h, m, s)
             : String(format: "%d:%02d", m, s)
     }

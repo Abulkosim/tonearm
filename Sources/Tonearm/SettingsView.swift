@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UserNotifications
 
 /// Settings panel shown inside the popover. Takes no arguments and reads the
 /// `AppSettings.shared` and `LaunchAtLogin.shared` singletons, so it needs no
@@ -7,6 +8,8 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var login = LaunchAtLogin.shared
+    /// macOS blocks Tonearm's notifications (System Settings › Notifications).
+    @State private var notificationsDenied = false
 
     static let repoURL = URL(string: "https://github.com/Abulkosim/tonearm")!
 
@@ -44,6 +47,19 @@ struct SettingsView: View {
             }
             row("Notify on song change") {
                 GreenSwitch(isOn: $settings.notifyOnTrackChange, label: "Notify on song change")
+            }
+            if notificationsDenied {
+                HStack(spacing: 8) {
+                    Text("Notifications are off for Tonearm")
+                        .foregroundColor(Theme.secondary)
+                    Spacer(minLength: 8)
+                    Button("Open Settings") { NSWorkspace.shared.open(Self.notificationSettingsURL) }
+                        .buttonStyle(QuietButtonStyle(color: Theme.accent, hover: Theme.accentHover))
+                }
+                .font(.system(size: 12))
+                .frame(height: 24)
+                .padding(.bottom, 4)
+                .transition(.opacity)
             }
 
             divider
@@ -107,9 +123,37 @@ struct SettingsView: View {
         .animation(Theme.ease, value: settings.menuBarStyle)
         .animation(Theme.ease, value: login.needsApproval)
         .animation(Theme.ease, value: settings.globalShortcuts)
-        .onAppear { login.refresh() }
+        .animation(Theme.ease, value: notificationsDenied)
+        .onAppear {
+            login.refresh()
+            refreshNotifications()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             login.refresh()
+            refreshNotifications()
+        }
+        .onChange(of: settings.notifyOnTrackChange) { _ in
+            // The model asks macOS first and turns the switch back off on a no.
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                refreshNotifications()
+            }
+        }
+    }
+
+    static let notificationSettingsURL =
+        URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!
+
+    private func refreshNotifications() {
+        Self.checkNotificationsDenied { notificationsDenied = $0 }
+    }
+
+    /// Asks macOS whether Tonearm's notifications are blocked. Never true outside an .app.
+    static func checkNotificationsDenied(_ done: @escaping @MainActor (Bool) -> Void) {
+        guard TrackNotifier.isAvailable else { return }
+        UNUserNotificationCenter.current().getNotificationSettings { s in
+            let denied = s.authorizationStatus == .denied
+            Task { @MainActor in done(denied) }
         }
     }
 
@@ -123,9 +167,7 @@ struct SettingsView: View {
                 Text(title)
                 Spacer()
                 if let keys {
-                    Text(keys)
-                        .font(.system(size: 12))
-                        .foregroundColor(Theme.muted)
+                    KeyCap(keys)
                 }
             }
             .padding(.horizontal, 8)

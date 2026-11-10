@@ -89,6 +89,8 @@ private struct PillButtonBody: View {
         configuration.label
             .font(.system(size: 13, weight: .bold))
             .foregroundColor(.black)
+            .lineLimit(1)
+            .fixedSize()
             .padding(.horizontal, 20)
             .frame(height: 32)
             .background(Capsule().fill(hovering && isEnabled ? PlayerTheme.greenHover : PlayerTheme.green))

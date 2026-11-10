@@ -37,6 +37,7 @@ enum Snapshot {
             ("nothing-playing", player(.stopped)),
             ("not-running", player(nil, notRunning)),
             ("not-authorized", player(nil, .init(status: .notAuthorized))),
+            ("connecting", player(nil, .init(status: .notRunning, connecting: true))),
             ("not-installed", player(nil, .init(status: .notInstalled))),
             ("waiting-for-permission", player(nil, askingPermission: true)),
             ("framed-player", framed(model(.playing), playing)),
