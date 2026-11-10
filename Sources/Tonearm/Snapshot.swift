@@ -9,7 +9,7 @@ enum Snapshot {
     @MainActor
     static func render(to url: URL) {
         if url.pathExtension.lowercased() == "png" {
-            write(view(state: .playing), to: url)
+            write(player(.playing, .init(shuffling: true)), to: url)
             return
         }
         do {
@@ -17,15 +17,29 @@ enum Snapshot {
         } catch {
             fail("cannot create \(url.path): \(error)")
         }
+        let playing = PlayerView.Preview(shuffling: true)
+        let compact = PlayerView.Preview(layout: .compact, shuffling: true)
+        let settings = PlayerView.Preview(settingsOpen: true)
+        let notRunning = PlayerView.Preview(status: .notRunning)
         let shots: [(String, AnyView)] = [
-            ("player-playing", view(state: .playing)),
-            ("player-paused", view(state: .paused)),
-            ("player-progress-hover", view(state: .playing, preview: .init(progressHover: true))),
-            ("player-settings", view(state: .playing, preview: .init(settingsOpen: true))),
-            ("nothing-playing", view(state: .stopped)),
-            ("not-running", view(state: nil, preview: .init(status: .notRunning))),
-            ("not-authorized", view(state: nil, preview: .init(status: .notAuthorized))),
-            ("not-installed", view(state: nil, preview: .init(status: .notInstalled))),
+            ("player-playing", player(.playing, playing)),
+            ("player-paused", player(.paused)),
+            ("player-progress-hover", player(.playing, .init(progressHover: true))),
+            ("player-cover-hover", player(.playing, .init(repeating: true, coverHover: true, coverNote: "Copied"))),
+            ("player-warm-cover", player(.playing, playing, cover: .warm)),
+            ("player-settings", player(.playing, settings)),
+            ("compact", player(.playing, compact)),
+            ("compact-warm-cover", player(.paused, compact, cover: .warm)),
+            ("nothing-playing", player(.stopped)),
+            ("not-running", player(nil, notRunning)),
+            ("not-authorized", player(nil, .init(status: .notAuthorized))),
+            ("not-installed", player(nil, .init(status: .notInstalled))),
+            ("waiting-for-permission", player(nil, askingPermission: true)),
+            ("framed-player", framed(player(.playing, playing))),
+            ("framed-player-warm", framed(player(.playing, playing, cover: .warm))),
+            ("framed-compact", framed(player(.playing, compact))),
+            ("framed-settings", framed(player(.playing, settings))),
+            ("framed-not-running", framed(player(nil, notRunning))),
         ]
         for (name, view) in shots {
             write(view, to: url.appendingPathComponent("\(name).png"))
@@ -33,19 +47,65 @@ enum Snapshot {
     }
 
     @MainActor
-    private static func view(state: PlayState?, preview: PlayerView.Preview = .init()) -> AnyView {
+    private static func player(_ state: PlayState?, _ preview: PlayerView.Preview = .init(),
+                               cover: SampleCover = .teal, askingPermission: Bool = false) -> AnyView {
         let model = PlayerModel(live: false)
+        if askingPermission { model.setPreviewAskingPermission() }
         if let state {
             let track = state == .stopped ? nil : Track(
-                id: "sample", title: "Sample Song Title", artist: "Sample Artist",
-                album: "Sample Album", artworkURL: nil, duration: 214
+                id: "spotify:track:0000000000000000000000", title: "Sample Song Title",
+                artist: "Sample Artist", album: "Sample Album", artworkURL: nil, duration: 214
             )
             model.setPreview(
                 Playback(state: state, track: track, position: track == nil ? 0 : 83, volume: 70),
-                artwork: track == nil ? nil : sampleArtwork()
+                artwork: track == nil ? nil : sampleArtwork(cover)
             )
         }
         return AnyView(PlayerView(preview: preview).environmentObject(model))
+    }
+
+    /// Puts the popover under a mock menu bar on a plain desktop, the way people see it.
+    @MainActor
+    private static func framed(_ popover: AnyView) -> AnyView {
+        let margin: CGFloat = 56
+        let menuBar = HStack(spacing: 16) {
+            HStack(spacing: 4) {
+                Image(systemName: "music.note")
+                Text("Sample Song Title")
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.white.opacity(0.22)))
+            Spacer(minLength: 0)
+            Image(systemName: "wifi")
+            Image(systemName: "battery.75")
+            Text("Tue 10:42")
+        }
+        .font(.system(size: 13, weight: .medium))
+        .foregroundColor(.white)
+        .padding(.leading, margin - 8)
+        .padding(.trailing, 16)
+        .frame(height: 28)
+        .background(Color.black.opacity(0.25))
+
+        let desktop = LinearGradient(
+            colors: [Color(red: 0.36, green: 0.40, blue: 0.45), Color(red: 0.17, green: 0.19, blue: 0.23)],
+            startPoint: .topLeading, endPoint: .bottomTrailing
+        )
+        return AnyView(
+            VStack(alignment: .leading, spacing: 0) {
+                menuBar
+                popover
+                    .popoverWindowShape()
+                    .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
+                    .padding(.top, 6)
+                    .padding(.leading, margin)
+                    .padding(.bottom, margin)
+            }
+            .frame(width: 300 + margin * 2, alignment: .leading)
+            .background(desktop)
+            .environment(\.colorScheme, .dark)
+        )
     }
 
     @MainActor
@@ -67,13 +127,23 @@ enum Snapshot {
         exit(1)
     }
 
+    /// Sample cover colors: the teal one, and a red one like many real covers.
+    enum SampleCover {
+        case teal, warm
+    }
+
     /// Abstract sample cover drawn in code: a record with a tonearm resting on it.
-    static func sampleArtwork() -> NSImage {
+    static func sampleArtwork(_ cover: SampleCover = .teal) -> NSImage {
         NSImage(size: NSSize(width: 600, height: 600), flipped: false) { rect in
             func color(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ a: CGFloat = 1) -> NSColor {
                 NSColor(srgbRed: r / 255, green: g / 255, blue: b / 255, alpha: a)
             }
-            NSGradient(starting: color(28, 78, 88), ending: color(12, 36, 44))?.draw(in: rect, angle: -90)
+            switch cover {
+            case .teal:
+                NSGradient(starting: color(28, 78, 88), ending: color(12, 36, 44))?.draw(in: rect, angle: -90)
+            case .warm:
+                NSGradient(starting: color(196, 58, 48), ending: color(120, 26, 30))?.draw(in: rect, angle: -90)
+            }
 
             let center = NSPoint(x: 260, y: 270)
             func circle(_ radius: CGFloat) -> NSBezierPath {
@@ -90,7 +160,7 @@ enum Snapshot {
                 groove.stroke()
                 r += 9
             }
-            color(238, 124, 92).setFill()
+            (cover == .teal ? color(238, 124, 92) : color(240, 196, 110)).setFill()
             circle(70).fill()
             color(10, 24, 30).setFill()
             circle(7).fill()
