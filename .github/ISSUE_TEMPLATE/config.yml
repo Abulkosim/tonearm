@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Questions
+    url: https://github.com/Abulkosim/tonearm/blob/main/docs/faq.md
+    about: First launch, the menu bar icon, the Spotify permission, updates.
   - name: Security problem
     url: https://github.com/Abulkosim/tonearm/security/advisories/new
     about: Report it privately.

@@ -25,4 +25,11 @@ Reset the permission so macOS asks again:
 
 ## After an update
 
-Release builds may be signed ad hoc instead of with an Apple Developer ID. macOS then treats each new version as a different app and can ask for the permission again. Click OK, or follow the steps above if you missed the prompt.
+From v0.3.0 on, every release is signed with the same certificate and updates arrive through the app itself (gear → Check for Updates…). macOS sees each update as the same app, so the permission stays and you are not asked again.
+
+You may be asked once more in these cases:
+
+- You move from v0.2.0 or earlier to v0.3.0. Those builds had a different signature. Click OK when macOS asks.
+- You build Tonearm from source. Local builds are signed ad hoc, and each build looks like a new app to macOS.
+
+If you missed the prompt, or Tonearm says Spotify isn't running while it is, follow the reset steps above.

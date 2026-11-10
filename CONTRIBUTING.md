@@ -1,5 +1,7 @@
 # Contributing
 
+Be kind. This project follows the [code of conduct](CODE_OF_CONDUCT.md).
+
 ## Build and run
 
 Needs macOS 13 or later and Xcode 15 or later (Swift 5.9). There are no dependencies.
@@ -28,6 +30,20 @@ gh run download <run-id> -n snapshots
 ## App icon
 
 The icon is drawn in code by `scripts/make-icon.swift`. Run `swift scripts/make-icon.swift` on macOS to regenerate `design/icon-1024.png` and `Resources/AppIcon.icns`, and commit both. The Icon workflow renders it on pull requests that touch the script and uploads a preview.
+
+## Website
+
+`site/index.html` is the page at https://abulkosim.github.io/tonearm/. It is plain HTML and CSS with no build step. The Pages workflow copies `design/icon-1024.png` and `docs/images/player.png` into it and deploys it when `site/` changes on `main`. To preview it:
+
+```sh
+cp design/icon-1024.png site/icon.png
+cp docs/images/player.png site/player.png
+open site/index.html
+```
+
+## Homebrew
+
+The cask lives in `packaging/homebrew/Casks/tonearm.rb` and is copied to the tap [Abulkosim/homebrew-tap](https://github.com/Abulkosim/homebrew-tap). It always installs the latest release, so releases don't need to touch it. See [packaging/homebrew/README.md](packaging/homebrew/README.md).
 
 ## Pull requests
 

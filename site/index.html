@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tonearm, a menu bar mini player for Spotify on the Mac</title>
+<meta name="description" content="Tonearm is a free, open-source mini player for the Spotify desktop app. It lives in the Mac menu bar and shows the cover, title and playback controls. No account, no login.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#161513">
+<link rel="icon" href="icon.png" type="image/png">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="canonical" href="https://abulkosim.github.io/tonearm/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Tonearm">
+<meta property="og:title" content="Tonearm, a menu bar mini player for Spotify on the Mac">
+<meta property="og:description" content="Cover, title and playback controls in the Mac menu bar. Free and open source. No account, no login.">
+<meta property="og:url" content="https://abulkosim.github.io/tonearm/">
+<meta property="og:image" content="https://abulkosim.github.io/tonearm/icon.png">
+<meta property="og:image:alt" content="Tonearm app icon: a black record with an orange label under a metal tonearm">
+<meta name="twitter:card" content="summary">
+<style>
+:root {
+  --deep: #12110f;
+  --page: #161513;
+  --card: #1c1a18;
+  --raised: #262421;
+  --line: rgba(239, 233, 222, 0.08);
+  --line-strong: rgba(239, 233, 222, 0.14);
+  --text: #efe9de;
+  --secondary: #aaa398;
+  --muted: #8a847a;
+  --accent: #e8853d;
+  --accent-hover: #f0954f;
+  --on-accent: #1a120a;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text);
+  font: 400 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; }
+a:focus-visible, .button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 32px; }
+
+header .wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 72px;
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 17px;
+  font-weight: 500;
+  text-decoration: none;
+}
+.brand img { width: 32px; height: 32px; display: block; }
+.nav-link {
+  font-size: 15px;
+  color: var(--secondary);
+  text-decoration: none;
+  transition: color 150ms var(--ease);
+}
+.nav-link:hover { color: var(--text); }
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 412px;
+  gap: 64px;
+  align-items: center;
+  padding-top: 48px;
+  padding-bottom: 96px;
+}
+h1 {
+  font-size: 56px;
+  line-height: 1.04;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  margin: 0 0 24px;
+  max-width: 11em;
+  text-wrap: balance;
+}
+.lede {
+  font-size: 18px;
+  line-height: 28px;
+  color: var(--secondary);
+  margin: 0 0 32px;
+  max-width: 34rem;
+  text-wrap: pretty;
+}
+.button {
+  display: inline-flex;
+  align-items: center;
+  height: 48px;
+  padding: 0 20px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 16px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background-color 150ms var(--ease), transform 150ms var(--ease);
+}
+.button:hover { background: var(--accent-hover); }
+.button:active { transform: scale(0.98); }
+.meta {
+  margin: 12px 0 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--muted);
+}
+.brew { margin-top: 32px; }
+.brew p { margin: 0 0 8px; font-size: 14px; line-height: 20px; color: var(--secondary); }
+pre {
+  margin: 0;
+  padding: 12px 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow-x: auto;
+  max-width: 34rem;
+}
+code {
+  font: 400 14px/20px var(--mono);
+  color: var(--text);
+}
+pre code { user-select: all; -webkit-user-select: all; }
+
+.shot { margin: 0; }
+.shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+}
+
+section {
+  border-top: 1px solid var(--line);
+  padding: 64px 0;
+}
+section .wrap {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 32px;
+}
+h2 {
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 500;
+  margin: 0;
+}
+.features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px 48px;
+}
+h3 {
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 500;
+  margin: 0 0 4px;
+}
+.features p, .steps p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 22px;
+  color: var(--secondary);
+}
+kbd {
+  display: inline-block;
+  min-width: 24px;
+  padding: 0 6px;
+  font: 400 12px/20px var(--mono);
+  color: var(--text);
+  text-align: center;
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+}
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 24px;
+  max-width: 36rem;
+}
+.steps li {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+}
+.steps .n {
+  font: 400 14px/22px var(--mono);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.steps a { color: var(--text); text-underline-offset: 3px; text-decoration-color: var(--line-strong); }
+.steps a:hover { text-decoration-color: var(--text); }
+
+footer {
+  background: var(--deep);
+  border-top: 1px solid var(--line);
+  padding: 32px 0 48px;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--muted);
+}
+footer .wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 32px;
+  justify-content: space-between;
+}
+footer p { margin: 0; }
+footer nav { display: flex; flex-wrap: wrap; gap: 8px 24px; }
+footer a { color: var(--secondary); text-decoration: none; transition: color 150ms var(--ease); }
+footer a:hover { color: var(--text); }
+
+@media (max-width: 880px) {
+  .hero { grid-template-columns: minmax(0, 1fr); gap: 48px; padding-bottom: 64px; }
+  .shot { max-width: 340px; }
+  section .wrap { grid-template-columns: 1fr; gap: 24px; }
+}
+@media (max-width: 560px) {
+  .wrap { padding: 0 16px; }
+  header .wrap { height: 64px; }
+  .hero { padding-top: 32px; }
+  h1 { font-size: 40px; line-height: 1.08; letter-spacing: -0.02em; }
+  .lede { font-size: 17px; line-height: 26px; }
+  .button { width: 100%; justify-content: center; }
+  .features { grid-template-columns: 1fr; gap: 24px; }
+  section { padding: 48px 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .button, .nav-link, footer a { transition: none; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a class="brand" href="./">
+      <img src="icon.png" alt="" width="32" height="32">
+      Tonearm
+    </a>
+    <a class="nav-link" href="https://github.com/Abulkosim/tonearm">GitHub</a>
+  </div>
+</header>
+
+<main>
+  <div class="wrap hero">
+    <div>
+      <h1>A mini player for Spotify in the Mac menu bar</h1>
+      <p class="lede">Click the song in the menu bar to see the cover, title and artist. Play, pause, skip, seek and change the volume without switching to the Spotify app.</p>
+      <a class="button" href="https://github.com/Abulkosim/tonearm/releases/latest/download/Tonearm.dmg">Download for Mac</a>
+      <p class="meta">Free and open source. macOS 13 or later, Apple Silicon and Intel.</p>
+      <div class="brew">
+        <p>Or with Homebrew</p>
+        <pre><code>brew install --cask abulkosim/tap/tonearm</code></pre>
+      </div>
+    </div>
+    <figure class="shot">
+      <img src="player.png" width="412" height="600" alt="Tonearm open under the menu bar, showing the cover, song title, artist, progress bar, playback buttons and volume">
+    </figure>
+  </div>
+
+  <section aria-labelledby="what">
+    <div class="wrap">
+      <h2 id="what">What it does</h2>
+      <ul class="features">
+        <li>
+          <h3>The song in the menu bar</h3>
+          <p>The title, the title and artist, or just an icon. You set how long it gets.</p>
+        </li>
+        <li>
+          <h3>Cover and colors</h3>
+          <p>The player shows the cover on a background taken from its colors. A compact layout keeps it small.</p>
+        </li>
+        <li>
+          <h3>All the controls</h3>
+          <p>Play, pause, previous, next, shuffle and repeat. Drag the bars to seek or to change Spotify's volume.</p>
+        </li>
+        <li>
+          <h3>Keyboard</h3>
+          <p><kbd>Space</kbd> plays or pauses, the arrow keys seek and change the volume. <kbd>⌃⌥P</kbd> <kbd>⌃⌥N</kbd> <kbd>⌃⌥B</kbd> work in any app if you turn them on.</p>
+        </li>
+        <li>
+          <h3>No account</h3>
+          <p>Tonearm talks to the Spotify app on your Mac through AppleScript. No login, no Web API, no analytics.</p>
+        </li>
+        <li>
+          <h3>Updates itself</h3>
+          <p>It checks once a day and installs new versions. The Spotify permission carries over.</p>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section aria-labelledby="first">
+    <div class="wrap">
+      <h2 id="first">First launch</h2>
+      <ol class="steps">
+        <li>
+          <span class="n">1</span>
+          <p>Open Tonearm. Tonearm is not notarized by Apple, so macOS blocks it the first time. Close the message.</p>
+        </li>
+        <li>
+          <span class="n">2</span>
+          <p>Open System Settings, then Privacy &amp; Security, and click Open Anyway. On macOS 13 and 14 you can right-click Tonearm in Applications and choose Open instead. Homebrew installs skip this step.</p>
+        </li>
+        <li>
+          <span class="n">3</span>
+          <p>Click OK when macOS asks to let Tonearm control Spotify. Then look for Tonearm in the menu bar, next to the clock. It has no Dock icon. If it doesn't show up, see the <a href="https://github.com/Abulkosim/tonearm/blob/main/docs/faq.md">questions</a>.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Not affiliated with Spotify. Spotify is a trademark of Spotify AB.</p>
+    <nav aria-label="Links">
+      <a href="https://github.com/Abulkosim/tonearm">Source on GitHub</a>
+      <a href="https://github.com/Abulkosim/tonearm/releases">Releases</a>
+      <a href="https://github.com/Abulkosim/tonearm/blob/main/LICENSE">MIT license</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

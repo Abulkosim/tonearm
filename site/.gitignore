@@ -1,0 +1,4 @@
+# Copied in by .github/workflows/pages.yml. To preview locally:
+# cp design/icon-1024.png site/icon.png && cp docs/images/player.png site/
+icon.png
+player.png
