@@ -80,11 +80,17 @@ final class PopoverKeys {
     private var monitor: Any?
 
     /// `handle` returns true when it used the key, which then goes no further.
-    func start(_ handle: @escaping @MainActor (KeyCommand) -> Bool) {
+    /// `window` is the player's window once known; keys typed in other windows (welcome,
+    /// updates) go on untouched.
+    func start(window: @escaping @MainActor () -> NSWindow?, _ handle: @escaping @MainActor (KeyCommand) -> Bool) {
         stop()
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            // Keys typed in the welcome window are not for the player.
             if event.window?.identifier == Onboarding.windowID { return event }
+            let elsewhere = MainActor.assumeIsolated { () -> Bool in
+                guard let player = window() else { return false }
+                return event.window !== player
+            }
+            if elsewhere { return event }
             guard let command = KeyCommand.from(keyCode: event.keyCode,
                                                 characters: event.charactersIgnoringModifiers,
                                                 modifiers: event.modifierFlags)

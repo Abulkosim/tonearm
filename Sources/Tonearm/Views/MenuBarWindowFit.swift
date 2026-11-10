@@ -24,13 +24,15 @@ import SwiftUI
 extension View {
     /// Keeps the MenuBarExtra window exactly the size of this view. Apply the background
     /// after this modifier so it fills the window.
-    func fitsMenuBarWindow(_ enabled: Bool = true) -> some View {
-        modifier(MenuBarWindowFit(enabled: enabled))
+    /// `onWindow` gets the window once the view lands in it.
+    func fitsMenuBarWindow(_ enabled: Bool = true, onWindow: ((NSWindow) -> Void)? = nil) -> some View {
+        modifier(MenuBarWindowFit(enabled: enabled, onWindow: onWindow))
     }
 }
 
 private struct MenuBarWindowFit: ViewModifier {
     let enabled: Bool
+    let onWindow: ((NSWindow) -> Void)?
     @StateObject private var fitter = WindowFitter()
 
     func body(content: Content) -> some View {
@@ -43,7 +45,7 @@ private struct MenuBarWindowFit: ViewModifier {
                         .onChange(of: geo.size) { fitter.contentSizeChanged($0) }
                 })
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .background(WindowReader(fitter: fitter))
+                .background(WindowReader(fitter: fitter, onWindow: onWindow))
                 .onAppear { fitter.windowShown() }
         } else {
             content
@@ -75,7 +77,8 @@ final class WindowFitter: ObservableObject {
         Task { @MainActor in self.fit(animate: false) }
     }
 
-    fileprivate func attach(to window: NSWindow?, from view: NSView) {
+    fileprivate func attach(to window: NSWindow?, from view: NSView, onWindow: ((NSWindow) -> Void)?) {
+        if let window { onWindow?(window) }
         guard window !== self.window else { return }
         observers.forEach { NotificationCenter.default.removeObserver($0) }
         observers = []
@@ -170,10 +173,12 @@ final class WindowFitter: ObservableObject {
 /// Zero-size view that reports the window it lands in.
 private struct WindowReader: NSViewRepresentable {
     let fitter: WindowFitter
+    let onWindow: ((NSWindow) -> Void)?
 
     func makeNSView(context: Context) -> NSView {
         let view = WindowReaderView()
         view.fitter = fitter
+        view.onWindow = onWindow
         return view
     }
 
@@ -182,10 +187,11 @@ private struct WindowReader: NSViewRepresentable {
 
 private final class WindowReaderView: NSView {
     weak var fitter: WindowFitter?
+    var onWindow: ((NSWindow) -> Void)?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        fitter?.attach(to: window, from: self)
+        fitter?.attach(to: window, from: self, onWindow: onWindow)
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }

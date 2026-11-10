@@ -38,3 +38,21 @@ final class KeyCommandTests: XCTestCase {
         XCTAssertFalse(KeyCommand.help.contains { $0.keys == "⌘Q" })
     }
 }
+
+final class LengthStepperTests: XCTestCase {
+    func testStepsSnapToMultiplesOfFour() {
+        XCTAssertEqual(LengthStepper.stepped(24, up: true), 28)
+        XCTAssertEqual(LengthStepper.stepped(24, up: false), 20)
+        // A length stored by an older version lands on the grid.
+        XCTAssertEqual(LengthStepper.stepped(30, up: true), 32)
+        XCTAssertEqual(LengthStepper.stepped(30, up: false), 28)
+    }
+
+    func testStaysInRange() {
+        XCTAssertEqual(LengthStepper.lowest, 16)
+        XCTAssertEqual(LengthStepper.stepped(16, up: false), 16)
+        XCTAssertEqual(LengthStepper.stepped(15, up: false), 16)
+        XCTAssertEqual(LengthStepper.stepped(60, up: true), 60)
+        XCTAssertEqual(LengthStepper.stepped(58, up: true), 60)
+    }
+}

@@ -65,7 +65,7 @@ struct PlayerView: View {
         }
         .id(session)
         .frame(width: Self.width)
-        .fitsMenuBarWindow(!isSnapshot)
+        .fitsMenuBarWindow(!isSnapshot, onWindow: model.attachPopoverWindow)
         .background(ArtworkBackground(colors: showSettings || status != .ready ? nil : model.artworkColors))
         .popoverWindowShape(!isSnapshot)
         .environment(\.colorScheme, .dark)
@@ -117,7 +117,8 @@ struct PlayerView: View {
             .accessibilityLabel("Back to player")
             .padding(.bottom, 8)
 
-            SettingsView()
+            SettingsView(notificationsDenied: model.notificationsDenied,
+                         openNotificationSettings: model.openNotificationSettings)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, Self.padding)
@@ -158,12 +159,8 @@ struct PlayerView: View {
         withAnimation(PlayerTheme.medium) { showSettings.toggle() }
     }
 
-    /// True while the Spotify process exists, even before it answers Apple Events. Asks the
-    /// system directly, since the model's own flag is private. Never in snapshots.
-    private var spotifyAppearsRunning: Bool {
-        guard let preview else { return model.bridge.isRunning }
-        return preview.connecting
-    }
+    /// True while the Spotify process exists, even before it answers Apple Events.
+    private var spotifyAppearsRunning: Bool { preview?.connecting ?? model.spotifyRunning }
 
     /// Puts the window back to the player, for the next time it opens.
     private func resetForNextOpen() {
@@ -553,7 +550,7 @@ struct PlayerView: View {
     private func appeared() {
         guard !isSnapshot else { return }
         model.popoverVisible = true
-        keys.start(handle)
+        keys.start(window: { model.popoverWindow }, handle)
     }
 
     private func disappeared() {

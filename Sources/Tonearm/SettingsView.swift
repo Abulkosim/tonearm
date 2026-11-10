@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import UserNotifications
 
 /// Settings panel shown inside the popover. Takes no arguments and reads the
 /// `AppSettings.shared` and `LaunchAtLogin.shared` singletons, so it needs no
@@ -8,8 +7,14 @@ import UserNotifications
 struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var login = LaunchAtLogin.shared
-    /// macOS blocks Tonearm's notifications (System Settings › Notifications).
-    @State private var notificationsDenied = false
+    /// macOS blocks Tonearm's notifications while "Notify on song change" is on.
+    private let notificationsDenied: Bool
+    private let openNotificationSettings: () -> Void
+
+    init(notificationsDenied: Bool = false, openNotificationSettings: @escaping () -> Void = {}) {
+        self.notificationsDenied = notificationsDenied
+        self.openNotificationSettings = openNotificationSettings
+    }
 
     static let repoURL = URL(string: "https://github.com/Abulkosim/tonearm")!
 
@@ -53,7 +58,7 @@ struct SettingsView: View {
                     Text("Notifications are off for Tonearm")
                         .foregroundColor(Theme.secondary)
                     Spacer(minLength: 8)
-                    Button("Open Settings") { NSWorkspace.shared.open(Self.notificationSettingsURL) }
+                    Button("Open Settings", action: openNotificationSettings)
                         .buttonStyle(QuietButtonStyle(color: Theme.accent, hover: Theme.accentHover))
                 }
                 .font(.system(size: 12))
@@ -124,36 +129,9 @@ struct SettingsView: View {
         .animation(Theme.ease, value: login.needsApproval)
         .animation(Theme.ease, value: settings.globalShortcuts)
         .animation(Theme.ease, value: notificationsDenied)
-        .onAppear {
-            login.refresh()
-            refreshNotifications()
-        }
+        .onAppear { login.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             login.refresh()
-            refreshNotifications()
-        }
-        .onChange(of: settings.notifyOnTrackChange) { _ in
-            // The model asks macOS first and turns the switch back off on a no.
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                refreshNotifications()
-            }
-        }
-    }
-
-    static let notificationSettingsURL =
-        URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!
-
-    private func refreshNotifications() {
-        Self.checkNotificationsDenied { notificationsDenied = $0 }
-    }
-
-    /// Asks macOS whether Tonearm's notifications are blocked. Never true outside an .app.
-    static func checkNotificationsDenied(_ done: @escaping @MainActor (Bool) -> Void) {
-        guard TrackNotifier.isAvailable else { return }
-        UNUserNotificationCenter.current().getNotificationSettings { s in
-            let denied = s.authorizationStatus == .denied
-            Task { @MainActor in done(denied) }
         }
     }
 
@@ -281,23 +259,32 @@ struct GreenSwitch: View {
 }
 
 /// "− 30 +" control for the menu bar title length.
-private struct LengthStepper: View {
+struct LengthStepper: View {
     @Binding var value: Int
 
     private let range = AppSettings.titleLengthRange
-    private let step = AppSettings.titleLengthStep
+    private static let step = AppSettings.titleLengthStep
+    /// Lowest value the buttons go to: the first multiple of `step` in the range.
+    static let lowest = (AppSettings.titleLengthRange.lowerBound + step - 1) / step * step
+
+    /// The next multiple of 4 up or down from `value`, so any stored length (say 30)
+    /// snaps onto 16, 20, 24, 28… Stays inside the settings range. Pure, for tests.
+    static func stepped(_ value: Int, up: Bool) -> Int {
+        let next = up ? (value / step + 1) * step : ((value + step - 1) / step - 1) * step
+        return min(max(next, lowest), AppSettings.titleLengthRange.upperBound)
+    }
 
     var body: some View {
         HStack(spacing: 0) {
-            stepButton("minus", label: "Shorter", enabled: value > range.lowerBound) {
-                value = AppSettings.clampLength(value - step)
+            stepButton("minus", label: "Shorter", enabled: value > Self.lowest) {
+                value = Self.stepped(value, up: false)
             }
             Text("\(value)")
                 .font(.system(size: 12).monospacedDigit())
                 .frame(width: 28)
                 .accessibilityLabel("Title length \(value) characters")
             stepButton("plus", label: "Longer", enabled: value < range.upperBound) {
-                value = AppSettings.clampLength(value + step)
+                value = Self.stepped(value, up: true)
             }
         }
         // Same surface as the segmented controls above it.

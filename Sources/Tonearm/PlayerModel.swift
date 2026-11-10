@@ -28,18 +28,23 @@ final class PlayerModel: ObservableObject {
     /// `.notAuthorized` meanwhile (never `.notRunning` while Spotify runs), so check this first.
     @Published private(set) var isAskingPermission = false
     /// True while the popover is open. Polls faster while visible. The view sets it on
-    /// appear and disappear; the model also follows the popover window, because a
+    /// appear and disappear; the model also follows `popoverWindow`, because a
     /// MenuBarExtra window does not reliably call those again after the first open.
     @Published var popoverVisible = false {
         didSet { if popoverVisible != oldValue { popoverVisibilityChanged() } }
     }
+    /// True while a Spotify process is running, even before it answers Apple Events.
+    /// `status == .notRunning` with this true means Spotify is still starting.
+    @Published private(set) var spotifyRunning = false
+    /// True when "Notify on song change" is on but macOS does not allow Tonearm to post.
+    /// The setting is left on; the user can allow notifications in System Settings.
+    @Published private(set) var notificationsDenied = false
 
     let bridge: SpotifyBridge
     let settings: AppSettings
     private let live: Bool
     private var observers: [Any] = []
     private var cancellables: Set<AnyCancellable> = []
-    private var spotifyRunning = false
     private var hotKeys: HotKeys?
     private var notifier: TrackNotifier?
 
@@ -62,6 +67,15 @@ final class PlayerModel: ObservableObject {
     /// Last volume Tonearm set. Spotify often reads it back one lower.
     private var lastSentVolume: Int?
     private var launchTimeout: DispatchWorkItem?
+    /// Reads scheduled after Spotify starts, until one succeeds.
+    private var startupReads: [DispatchWorkItem] = []
+    /// ⌃⌥P launched Spotify: start playback after the first good read.
+    private var playWhenReady = false
+    /// No reads until then. Spotify pauses (or stops) as it quits, and an Apple Event that
+    /// reaches it mid-quit makes AppleScript launch it again.
+    private var quietUntil = Date.distantPast
+    /// The MenuBarExtra window. See `followWindow`.
+    private weak var trackedPopoverWindow: NSWindow?
 
     private var artworkURL: URL?
     /// The URL whose image is in `artwork`. `artwork` keeps the old cover while a new one loads.
@@ -71,9 +85,8 @@ final class PlayerModel: ObservableObject {
 
     /// Position corrections smaller than this are ignored while playing.
     static let driftTolerance = 0.75
-    /// Seconds between reads while the popover shows a playing song, and otherwise.
-    static let visiblePollInterval: TimeInterval = 2
-    static let backgroundPollInterval: TimeInterval = 5
+    /// Seconds after Spotify launches at which to read, until a read succeeds.
+    static let startupReadDelays: [TimeInterval] = [1, 3, 6]
 
     var track: Track? { playback.track }
     var isPlaying: Bool { playback.state == .playing }
@@ -81,6 +94,9 @@ final class PlayerModel: ObservableObject {
     var repeating: Bool { playback.repeating }
     /// open.spotify.com link for the current song or episode. Nil for local files and ads.
     var trackURL: URL? { track.flatMap { SpotifyLink.webURL(for: $0.id) } }
+    /// The MenuBarExtra window, once it has been shown. Use it to tell the player's own key
+    /// events from those of other windows (`event.window === model.popoverWindow`).
+    var popoverWindow: NSWindow? { trackedPopoverWindow }
 
     init(bridge: SpotifyBridge = SpotifyBridge(), settings: AppSettings = .shared, live: Bool = true) {
         self.bridge = bridge
@@ -110,23 +126,30 @@ final class PlayerModel: ObservableObject {
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.recheckIfBlocked() }
+            Task { @MainActor in
+                self?.recheckIfBlocked()
+                self?.checkNotifications(ask: false)
+            }
         })
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
                      NSWindow.didChangeOcclusionStateNotification, NSWindow.willCloseNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) {
-                [weak self] _ in
-                // Let the window finish ordering in or out before looking.
-                DispatchQueue.main.async {
-                    Task { @MainActor in self?.followPopoverWindow() }
-                }
+                [weak self] note in
+                guard let window = note.object as? NSWindow else { return }
+                let name = note.name
+                MainActor.assumeIsolated { self?.windowEvent(window, name: name) }
             })
         }
 
         startExtras()
 
-        spotifyRunning = bridge.isRunning
-        if spotifyRunning { refresh() } else { spotifyStopped() }
+        setSpotifyRunning(bridge.isRunning)
+        if spotifyRunning {
+            refresh()
+            readUntilReady()
+        } else {
+            spotifyStopped()
+        }
     }
 
     private nonisolated static func isSpotify(_ note: Notification) -> Bool {
@@ -143,6 +166,7 @@ final class PlayerModel: ObservableObject {
             isEnabled: { [weak self] in self?.settings.notifyOnTrackChange ?? false },
             isPopoverVisible: { [weak self] in self?.popoverVisible ?? false }
         )
+        TrackNotifier.installDelegate { [weak self] in self?.showInSpotify() }
         // The publishers fire before the value is stored, so read it again after a hop.
         settings.$globalShortcuts.removeDuplicates().sink { [weak self] _ in
             Task { @MainActor in
@@ -151,15 +175,36 @@ final class PlayerModel: ObservableObject {
             }
         }.store(in: &cancellables)
         settings.$notifyOnTrackChange.removeDuplicates().sink { [weak self] _ in
-            Task { @MainActor in self?.notifySettingChanged() }
+            Task { @MainActor in self?.checkNotifications(ask: true) }
         }.store(in: &cancellables)
     }
 
-    private func notifySettingChanged() {
-        guard settings.notifyOnTrackChange else { return }
-        TrackNotifier.requestAuthorization { [weak self] granted in
-            // Turn the switch back off if macOS will not show them.
-            if !granted { self?.settings.notifyOnTrackChange = false }
+    /// Updates `notificationsDenied`. With `ask`, shows macOS's prompt if the user never
+    /// answered it; macOS shows it only once, so this never nags. The setting stays as the
+    /// user left it either way.
+    private func checkNotifications(ask: Bool) {
+        guard settings.notifyOnTrackChange else {
+            if notificationsDenied { notificationsDenied = false }
+            return
+        }
+        TrackNotifier.authorization { [weak self] auth in
+            guard let self else { return }
+            if ask, auth == .notDetermined {
+                TrackNotifier.requestAuthorization { [weak self] _ in self?.checkNotifications(ask: false) }
+                return
+            }
+            let denied = TrackNotifier.isBlocked(settingOn: self.settings.notifyOnTrackChange, authorization: auth)
+            if denied != self.notificationsDenied { self.notificationsDenied = denied }
+        }
+    }
+
+    /// Opens System Settings at Notifications, where the user can allow Tonearm again.
+    func openNotificationSettings() {
+        let id = Bundle.main.bundleIdentifier ?? ""
+        let links = ["x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(id)",
+                     "x-apple.systempreferences:com.apple.preference.notifications"]
+        for link in links {
+            if let url = URL(string: link), NSWorkspace.shared.open(url) { return }
         }
     }
 
@@ -172,19 +217,67 @@ final class PlayerModel: ObservableObject {
 
     private func perform(_ action: HotKeys.Action) {
         switch action {
-        case .playPause: playPause()
+        case .playPause:
+            if status == .ready {
+                playPause()
+            } else if !spotifyRunning {
+                // Start Spotify in the background, then play.
+                playWhenReady = true
+                launchSpotify(activate: false)
+            } else if status == .notRunning {
+                // Spotify is still starting.
+                playWhenReady = true
+            }
         case .next: next()
         case .previous: previous()
         }
     }
 
-    /// The MenuBarExtra panel is the app's only window besides the status item's own and
-    /// the welcome window.
-    private func followPopoverWindow() {
-        let visible = NSApp.windows.contains { window in
-            window.className != "NSStatusBarWindow" && window.identifier != Onboarding.windowID
-                && window.isVisible && window.occlusionState.contains(.visible) && window.frame.width > 40
+    // MARK: Popover window
+
+    /// Tells the model which window shows the player. Optional: the model also finds the
+    /// MenuBarExtra window on its own (see `isPopoverWindow`). Call it from the view that
+    /// lives in the window, for example when it moves to a window.
+    func attachPopoverWindow(_ window: NSWindow?) {
+        guard let window else { return }
+        trackedPopoverWindow = window
+        followWindow()
+    }
+
+    /// The MenuBarExtra window is created by SwiftUI itself. That rules out the status
+    /// item's window (AppKit), the welcome window (Tonearm) and update windows (Sparkle).
+    /// Pure, for tests.
+    nonisolated static func isPopoverWindow(className: String, classBundleID: String?) -> Bool {
+        guard !className.contains("StatusBar") else { return false }
+        return className.contains("MenuBarExtra") || classBundleID == "com.apple.SwiftUI"
+    }
+
+    private static func isPopoverWindow(_ window: NSWindow) -> Bool {
+        isPopoverWindow(className: window.className, classBundleID: Bundle(for: type(of: window)).bundleIdentifier)
+    }
+
+    /// Follows key, occlusion and close events of the one popover window; other windows are
+    /// ignored. The window is (re)learned when it becomes key, in case SwiftUI makes a new one.
+    private func windowEvent(_ window: NSWindow, name: Notification.Name) {
+        if name == NSWindow.didBecomeKeyNotification, window !== trackedPopoverWindow,
+           Self.isPopoverWindow(window) {
+            trackedPopoverWindow = window
         }
+        guard window === trackedPopoverWindow else { return }
+        if name == NSWindow.willCloseNotification {
+            if popoverVisible { popoverVisible = false }
+            return
+        }
+        // Look now, and again once an order-in or fade-out animation has finished.
+        followWindow()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            MainActor.assumeIsolated { self?.followWindow() }
+        }
+    }
+
+    private func followWindow() {
+        guard let window = trackedPopoverWindow else { return }
+        let visible = window.isVisible && window.alphaValue > 0 && window.occlusionState.contains(.visible)
         if visible != popoverVisible { popoverVisible = visible }
     }
 
@@ -200,9 +293,13 @@ final class PlayerModel: ObservableObject {
 
     // MARK: Updates
 
+    /// Reads everything from Spotify once. Every read goes through here. During the quiet
+    /// period after a pause or stop it waits until the period ends instead.
     func refresh() {
         guard live else { return }
         guard spotifyRunning else { return spotifyStopped() }
+        let wait = quietUntil.timeIntervalSinceNow
+        if wait > 0 { return scheduleRefresh(after: wait + 0.05) }
         if fetchInFlight { fetchQueued = true; return }
         fetchInFlight = true
         delayedRefresh?.cancel()
@@ -237,18 +334,26 @@ final class PlayerModel: ObservableObject {
             status = .ready
             isLaunching = false
             launchTimeout?.cancel()
+            cancelStartupReads()
             // A command was sent while this fetch ran; its answer may predate the command.
             guard generation == commandGeneration else { fetchQueued = true; return }
             merge(state: p.state, track: p.track, reportedPosition: p.position, volume: p.volume,
                   modes: (p.shuffling, p.repeating), at: readAt, fromNotification: false)
             loadArtwork(p.track?.artworkURL)
+            if playWhenReady {
+                playWhenReady = false
+                if p.state != .playing { startPlayback() }
+            }
         case .failure(.notAuthorized):
             status = .notAuthorized
+            // Do not start playing later, out of the blue, once access is granted.
+            playWhenReady = false
         case .failure(.notRunning):
             // Spotify quit mid-call, or is still starting. The terminate notification handles a real quit.
             if !bridge.isRunning { spotifyTerminated() }
         case .failure:
             // Transient (timeout, no current track, Spotify busy). Keep the last good state.
+            // While Spotify starts, `readUntilReady` tries again.
             break
         }
     }
@@ -257,9 +362,8 @@ final class PlayerModel: ObservableObject {
         guard live else { return }
         if !spotifyRunning {
             guard bridge.isRunning else { return }
-            spotifyRunning = true
+            setSpotifyRunning(true)
         }
-        let previousID = playback.track?.id
         if let update, status == .ready {
             var track = update.track
             if track?.id == playback.track?.id { track?.artworkURL = playback.track?.artworkURL }
@@ -268,13 +372,10 @@ final class PlayerModel: ObservableObject {
         }
         // One AppleScript read for artwork, volume and the exact position. Spotify pauses
         // when it quits, and an Apple Event that reaches it mid-quit makes AppleScript
-        // relaunch it. So a pause or stop without a new song waits until a quit is visible.
-        let newSong = update?.track != nil && update?.track?.id != previousID
-        if let update, update.state != .playing, !newSong {
-            scheduleRefresh(after: 1.5)
-        } else {
-            refresh()
-        }
+        // relaunch it. So after a pause or stop every read waits (see `refresh`) until a
+        // quit would be visible; the terminate notification then cancels it.
+        quietUntil = PollPolicy.quietUntil(after: update?.state, now: Date(), current: quietUntil)
+        refresh()
         updatePolling()
     }
 
@@ -320,11 +421,8 @@ final class PlayerModel: ObservableObject {
     }
 
     private func updatePolling() {
-        var interval: TimeInterval?
-        if live && spotifyRunning {
-            interval = popoverVisible && isPlaying && status == .ready
-                ? Self.visiblePollInterval : Self.backgroundPollInterval
-        }
+        let interval = live ? PollPolicy.interval(spotifyRunning: spotifyRunning, windowOpen: popoverVisible,
+                                                  playing: isPlaying, ready: status == .ready) : nil
         guard interval != pollInterval else { return }
         pollTimer?.invalidate()
         pollTimer = nil
@@ -352,29 +450,52 @@ final class PlayerModel: ObservableObject {
 
     // MARK: Spotify lifecycle
 
+    private func setSpotifyRunning(_ running: Bool) {
+        if spotifyRunning != running { spotifyRunning = running }
+    }
+
     private func spotifyLaunched() {
-        spotifyRunning = true
+        setSpotifyRunning(true)
+        quietUntil = .distantPast
         if status == .notInstalled { status = .notRunning }
         updatePolling()
-        refresh()
-        // Spotify answers Apple Events a moment after the process starts.
-        for delay in [1.5, 4.0] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                Task { @MainActor in self?.refresh() }
+        readUntilReady()
+    }
+
+    /// Spotify answers Apple Events a while after its process starts. Reads a few times
+    /// until one succeeds, so the player does not wait for the next song change.
+    private func readUntilReady() {
+        cancelStartupReads()
+        startupReads = Self.startupReadDelays.map { delay in
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.spotifyRunning, self.status != .ready else { return }
+                    self.refresh()
+                }
             }
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+            return work
         }
     }
 
+    private func cancelStartupReads() {
+        startupReads.forEach { $0.cancel() }
+        startupReads = []
+    }
+
     private func spotifyTerminated() {
-        spotifyRunning = bridge.isRunning
+        setSpotifyRunning(bridge.isRunning)
         if !spotifyRunning { spotifyStopped() }
     }
 
     /// Resets to the idle state. Never sends Apple Events.
     private func spotifyStopped() {
-        spotifyRunning = false
+        setSpotifyRunning(false)
         if isAskingPermission { isAskingPermission = false }
         fetchQueued = false
+        playWhenReady = false
+        quietUntil = .distantPast
+        cancelStartupReads()
         delayedRefresh?.cancel()
         delayedRefresh = nil
         let idle: Status = bridge.isInstalled ? .notRunning : .notInstalled
@@ -458,6 +579,12 @@ final class PlayerModel: ObservableObject {
         commandGeneration += 1
         bridge.send(.playPause) { [weak self] in self?.refresh() }
         updatePolling()
+    }
+
+    /// Starts playback (never pauses). Used after ⌃⌥P launched Spotify.
+    private func startPlayback() {
+        commandGeneration += 1
+        bridge.send(.play) { [weak self] in self?.refresh() }
     }
 
     func next() {
@@ -554,10 +681,11 @@ final class PlayerModel: ObservableObject {
         }
     }
 
-    /// Launches Spotify in the background without taking focus.
+    /// Launches Spotify in the background without taking focus. If it is already running
+    /// (still starting, say), brings it to the front instead, so the button always does something.
     func openSpotify() {
-        guard live, !spotifyRunning else { return }
-        launchSpotify(activate: false)
+        guard live else { return }
+        launchSpotify(activate: spotifyRunning)
     }
 
     /// Brings Spotify to the front, opening its window. Launches it if it is not running.
@@ -571,7 +699,10 @@ final class PlayerModel: ObservableObject {
             isLaunching = true
             launchTimeout?.cancel()
             let timeout = DispatchWorkItem { [weak self] in
-                Task { @MainActor in self?.isLaunching = false }
+                MainActor.assumeIsolated {
+                    self?.isLaunching = false
+                    self?.playWhenReady = false
+                }
             }
             launchTimeout = timeout
             DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: timeout)
@@ -579,6 +710,7 @@ final class PlayerModel: ObservableObject {
         bridge.launch(activate: activate) { [weak self] ok in
             guard let self, !ok, !self.spotifyRunning else { return }
             self.isLaunching = false
+            self.launchTimeout?.cancel()
             self.spotifyStopped()
         }
     }
@@ -654,6 +786,36 @@ enum PlayerMath {
         let reported = SpotifyBridge.clampVolume(reported)
         if let lastSent, local == lastSent, abs(reported - lastSent) <= 1 { return local }
         return reported
+    }
+}
+
+/// How often to read from Spotify. Spotify's own notification keeps the menu bar label
+/// current, so with the popover closed a paused player is never read and a playing one only
+/// rarely, as a fallback for a missed notification. Pure, for tests.
+enum PollPolicy {
+    static let openPlaying: TimeInterval = 2
+    static let openIdle: TimeInterval = 5
+    static let closedPlaying: TimeInterval = 30
+
+    /// Seconds without reads after Spotify reports a pause or stop.
+    static let quietPeriod: TimeInterval = 2
+
+    /// The end of the quiet period after a notification with `state`. A pause or stop
+    /// starts one; playing shows Spotify is not quitting and ends it.
+    static func quietUntil(after state: PlayState?, now: Date, current: Date) -> Date {
+        switch state {
+        case .playing: return .distantPast
+        case .paused, .stopped: return now.addingTimeInterval(quietPeriod)
+        case nil: return current
+        }
+    }
+
+    /// Seconds between reads, or nil for none.
+    static func interval(spotifyRunning: Bool, windowOpen: Bool, playing: Bool, ready: Bool) -> TimeInterval? {
+        guard spotifyRunning else { return nil }
+        let playing = playing && ready
+        if windowOpen { return playing ? openPlaying : openIdle }
+        return playing ? closedPlaying : nil
     }
 }
 
