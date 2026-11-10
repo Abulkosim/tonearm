@@ -1,0 +1,244 @@
+name: Release
+
+# Tag push vX.Y.Z: build, sign, notarize when secrets exist, package, attest and publish.
+# workflow_dispatch and pull requests that touch release files: dry run that only uploads artifacts.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/build-app.sh
+      - scripts/package.sh
+      - scripts/notarize.sh
+      - scripts/import-signing-cert.sh
+      - scripts/check-release.sh
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version for the dry-run file names, for example 0.0.0-test
+        required: true
+        default: 0.0.0-test
+      sign:
+        description: Sign and notarize with the repository secrets, if they exist
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  prepare:
+    name: Resolve version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          case "$EVENT" in
+            push)
+              scripts/check-release.sh "$REF_NAME"
+              version="${REF_NAME#v}"
+              publish=true
+              ;;
+            workflow_dispatch)
+              version="$INPUT_VERSION"
+              publish=false
+              ;;
+            *)
+              version="0.0.0-pr.$PR_NUMBER"
+              publish=false
+              ;;
+          esac
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::invalid version: $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "Version $version, publish: $publish" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build and package
+    needs: prepare
+    runs-on: macos-15
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      signing: ${{ steps.signing.outputs.mode }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BUILD: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: swift --version && sw_vers
+      # Secrets reach this job only for tag pushes, or a manual run with sign enabled.
+      - name: Signing mode
+        id: signing
+        env:
+          ALLOWED: ${{ github.event_name == 'push' || inputs.sign == true }}
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          mode=adhoc
+          if [ "$ALLOWED" = true ] && [ -n "$MACOS_CERT_P12" ]; then
+            if [ -z "$MACOS_CERT_PASSWORD" ] || [ -z "$MACOS_SIGN_IDENTITY" ]; then
+              echo "::error::MACOS_CERT_P12 is set but MACOS_CERT_PASSWORD or MACOS_SIGN_IDENTITY is missing"
+              exit 1
+            fi
+            mode=developer-id
+            if [ -n "$NOTARY_KEY_P8" ] && [ -n "$NOTARY_KEY_ID" ] && [ -n "$NOTARY_ISSUER_ID" ]; then
+              mode=notarized
+            elif [ -n "$APPLE_ID" ] && [ -n "$APPLE_TEAM_ID" ] && [ -n "$APPLE_APP_PASSWORD" ]; then
+              mode=notarized
+            fi
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "Signing: $mode" >> "$GITHUB_STEP_SUMMARY"
+          echo "signing: $mode"
+      - name: Import signing certificate
+        if: steps.signing.outputs.mode != 'adhoc'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: scripts/import-signing-cert.sh
+      - name: Build app
+        env:
+          SIGN_IDENTITY: ${{ steps.signing.outputs.mode != 'adhoc' && secrets.MACOS_SIGN_IDENTITY || '-' }}
+        run: scripts/build-app.sh
+      - name: Package
+        env:
+          SIGN_IDENTITY: ${{ steps.signing.outputs.mode != 'adhoc' && secrets.MACOS_SIGN_IDENTITY || '-' }}
+          NOTARIZE: ${{ steps.signing.outputs.mode == 'notarized' }}
+          APPLE_ID: ${{ steps.signing.outputs.mode == 'notarized' && secrets.APPLE_ID || '' }}
+          APPLE_TEAM_ID: ${{ steps.signing.outputs.mode == 'notarized' && secrets.APPLE_TEAM_ID || '' }}
+          APPLE_APP_PASSWORD: ${{ steps.signing.outputs.mode == 'notarized' && secrets.APPLE_APP_PASSWORD || '' }}
+          NOTARY_KEY_P8: ${{ steps.signing.outputs.mode == 'notarized' && secrets.NOTARY_KEY_P8 || '' }}
+          NOTARY_KEY_ID: ${{ steps.signing.outputs.mode == 'notarized' && secrets.NOTARY_KEY_ID || '' }}
+          NOTARY_ISSUER_ID: ${{ steps.signing.outputs.mode == 'notarized' && secrets.NOTARY_ISSUER_ID || '' }}
+        run: scripts/package.sh
+      - name: Inspect packaged app
+        run: |
+          check="$(mktemp -d)"
+          ditto -x -k "dist/Tonearm-$VERSION.zip" "$check"
+          app="$check/Tonearm.app"
+          codesign --verify --strict --verbose=2 "$app"
+          codesign -dv --entitlements - "$app" 2>&1 | tee "$check/codesign.txt"
+          grep -q 'com.apple.security.automation.apple-events' "$check/codesign.txt"
+          grep -Eq 'flags=0x[0-9a-f]+\(.*runtime' "$check/codesign.txt"
+          archs="$(lipo -archs "$app/Contents/MacOS/Tonearm")"
+          [[ " $archs " == *" arm64 "* && " $archs " == *" x86_64 "* ]]
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$VERSION"
+      - name: Remove signing keychain
+        if: always() && steps.signing.outputs.mode != 'adhoc'
+        run: security delete-keychain "$RUNNER_TEMP/tonearm-signing.keychain-db" || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ needs.prepare.outputs.version }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  release:
+    name: Publish GitHub release
+    needs: [prepare, build]
+    if: needs.prepare.outputs.publish == 'true' && github.repository == 'Abulkosim/tonearm'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ github.ref_name }}
+      SIGNING: ${{ needs.build.outputs.signing }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-${{ needs.prepare.outputs.version }}
+          path: dist/
+      - name: Verify checksums
+        working-directory: dist
+        run: |
+          ls -l
+          sha256sum -c SHA256SUMS.txt
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/Tonearm-${{ needs.prepare.outputs.version }}.zip
+            dist/Tonearm-${{ needs.prepare.outputs.version }}.dmg
+            dist/SHA256SUMS.txt
+      - name: Write release notes
+        run: |
+          {
+            cat "changelogs/$TAG.md"
+            echo
+            echo "## Install"
+            echo
+            echo "Download \`Tonearm-$VERSION.dmg\`, open it and drag Tonearm to Applications. Needs macOS 13 or later and the Spotify desktop app."
+            echo
+            case "$SIGNING" in
+              notarized)
+                echo "Signed with a Developer ID and notarized by Apple."
+                ;;
+              developer-id)
+                echo "Signed with a Developer ID. **Not notarized**, so macOS blocks the first launch: open Tonearm once, then go to System Settings > Privacy & Security and click Open Anyway."
+                ;;
+              *)
+                echo "**Not notarized.** This build is ad-hoc signed, not signed with an Apple Developer ID, so macOS blocks the first launch. Open Tonearm once, then go to System Settings > Privacy & Security and click Open Anyway. On macOS 13 and 14 you can also Control-click Tonearm in Applications and choose Open."
+                echo
+                echo "macOS may ask again for permission to control Spotify after you update to a new version."
+                ;;
+            esac
+            echo
+            echo "Check the download with \`shasum -a 256 -c SHA256SUMS.txt\` or \`gh attestation verify Tonearm-$VERSION.dmg --repo $GITHUB_REPOSITORY\`."
+          } > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::error::release $TAG already exists; ship a new patch version instead"
+            exit 1
+          fi
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag \
+            --title "Tonearm $TAG" --notes-file "$RUNNER_TEMP/notes.md" \
+            "dist/Tonearm-$VERSION.dmg" "dist/Tonearm-$VERSION.zip" dist/SHA256SUMS.txt

@@ -13,6 +13,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
     name: Build and snapshot
@@ -27,7 +31,11 @@ jobs:
       - name: Test
         run: swift test
       - name: Build app
-        run: scripts/build-app.sh
+        run: |
+          mkdir -p build
+          scripts/build-app.sh 2>&1 | tee build/build.log
+      - name: Report warnings
+        run: scripts/swift-warnings.sh build/build.log
       - name: Render snapshot
         run: |
           mkdir -p build/snapshots
@@ -36,11 +44,30 @@ jobs:
         with:
           name: snapshots
           path: build/snapshots/
+          if-no-files-found: error
           retention-days: 14
-      - name: Zip app
-        run: ditto -c -k --keepParent build/Tonearm.app build/Tonearm.zip
+      - name: Package
+        run: scripts/package.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Tonearm-app
-          path: build/Tonearm.zip
+          path: dist/
+          if-no-files-found: error
           retention-days: 14
+          compression-level: 0
+
+  lint:
+    name: Scripts and release notes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: ShellCheck
+        run: shellcheck --version && shellcheck scripts/*.sh
+      - name: Release notes for the current version
+        run: |
+          version="$(grep -A1 '<key>CFBundleShortVersionString</key>' Resources/Info.plist \
+            | sed -n 's:.*<string>\(.*\)</string>.*:\1:p')"
+          scripts/check-release.sh "v$version"
