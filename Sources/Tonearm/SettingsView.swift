@@ -69,8 +69,7 @@ struct SettingsView: View {
             row("Global shortcuts") {
                 GreenSwitch(isOn: $settings.globalShortcuts, label: "Global shortcuts")
             }
-            ShortcutList(items: Self.globalCombos, keyWidth: 56)
-                .opacity(settings.globalShortcuts ? 1 : 0.6)
+            ShortcutList(items: Self.globalCombos, keyWidth: 64)
                 .padding(.bottom, 4)
                 .accessibilityElement(children: .combine)
 
