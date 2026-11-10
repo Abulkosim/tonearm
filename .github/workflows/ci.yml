@@ -36,10 +36,10 @@ jobs:
           scripts/build-app.sh 2>&1 | tee build/build.log
       - name: Report warnings
         run: scripts/swift-warnings.sh build/build.log
-      - name: Render snapshot
+      - name: Render snapshots
         run: |
-          mkdir -p build/snapshots
-          build/Tonearm.app/Contents/MacOS/Tonearm --snapshot build/snapshots/player.png
+          build/Tonearm.app/Contents/MacOS/Tonearm --snapshot build/snapshots
+          ls -l build/snapshots
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: snapshots
