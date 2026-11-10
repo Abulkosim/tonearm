@@ -10,6 +10,13 @@ struct SettingsView: View {
 
     static let repoURL = URL(string: "https://github.com/Abulkosim/tonearm")!
 
+    /// The global combos the core registers when "Global shortcuts" is on.
+    static let globalCombos: [(keys: String, action: String)] = [
+        ("⌃⌥Space", "Play or pause"),
+        ("⌃⌥→", "Next"),
+        ("⌃⌥←", "Previous"),
+    ]
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             row("Menu bar") {
@@ -28,6 +35,21 @@ struct SettingsView: View {
                 }
                 .transition(.opacity)
             }
+
+            divider
+
+            row("Layout") {
+                SegmentedChoice(selection: $settings.layout, options: [
+                    .init(value: .large, title: "Large"),
+                    .init(value: .compact, title: "Compact"),
+                ])
+            }
+            row("Notify on song change") {
+                GreenSwitch(isOn: $settings.notifyOnTrackChange, label: "Notify on song change")
+            }
+
+            divider
+
             row("Launch at login") {
                 GreenSwitch(isOn: Binding(get: { login.isOn }, set: { login.setEnabled($0) }),
                             label: "Launch at login")
@@ -44,16 +66,36 @@ struct SettingsView: View {
                 .frame(height: 24)
                 .padding(.bottom, 4)
             }
+            row("Global shortcuts") {
+                GreenSwitch(isOn: $settings.globalShortcuts, label: "Global shortcuts")
+            }
+            ShortcutList(items: Self.globalCombos, keyWidth: 56)
+                .opacity(settings.globalShortcuts ? 1 : 0.6)
+                .padding(.bottom, 4)
+                .accessibilityElement(children: .combine)
 
-            Theme.hairline
-                .frame(height: 1)
-                .padding(.vertical, 8)
+            divider
+
+            Text("Shortcuts")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(Theme.secondary)
+                .frame(height: 24)
+            HStack(alignment: .top, spacing: 16) {
+                ShortcutList(items: Array(KeyCommand.help.prefix(4)), keyWidth: 48)
+                ShortcutList(items: Array(KeyCommand.help.dropFirst(4)), keyWidth: 24)
+            }
+            .padding(.bottom, 4)
+            .accessibilityElement(children: .combine)
+
+            divider
 
             Button(action: { NSApp.terminate(nil) }) {
                 HStack {
                     Text("Quit Tonearm")
                     Spacer()
-                    Keycap(text: "⌘Q")
+                    Text("⌘Q")
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.muted)
                 }
                 .padding(.horizontal, 8)
                 .frame(height: 32)
@@ -72,7 +114,6 @@ struct SettingsView: View {
             }
             .font(.system(size: 12))
             .frame(height: 24)
-            .padding(.top, 4)
         }
         .font(.system(size: 13))
         .foregroundColor(.white)
@@ -82,6 +123,12 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             login.refresh()
         }
+    }
+
+    private var divider: some View {
+        Theme.hairline
+            .frame(height: 1)
+            .padding(.vertical, 8)
     }
 
     static var version: String {
@@ -217,19 +264,26 @@ private struct LengthStepper: View {
     }
 }
 
-private struct Keycap: View {
-    let text: String
+/// Plain two-column list: keys in muted grey, what they do in secondary grey.
+private struct ShortcutList: View {
+    let items: [(keys: String, action: String)]
+    let keyWidth: CGFloat
 
     var body: some View {
-        Text(text)
-            .font(.system(size: 11))
-            .foregroundColor(Theme.muted)
-            .padding(.horizontal, 4)
-            .frame(height: 18)
-            .overlay(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
-            )
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(items.indices, id: \.self) { i in
+                HStack(spacing: 8) {
+                    Text(items[i].keys)
+                        .foregroundColor(Theme.muted)
+                        .frame(width: keyWidth, alignment: .leading)
+                    Text(items[i].action)
+                        .foregroundColor(Theme.secondary)
+                }
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .frame(height: 20)
+            }
+        }
     }
 }
 

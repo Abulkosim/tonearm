@@ -11,6 +11,14 @@ enum PlayerTheme {
     static let placeholder = rgb(0x28, 0x28, 0x28)
     static let textSecondary = rgb(0xB3, 0xB3, 0xB3)
     static let barTrack = Color.white.opacity(0.3)
+    static let hairline = Color.white.opacity(0.08)
+
+    /// Corner radius of the popover window: 10pt like system menus before macOS 26,
+    /// rounder on macOS 26.
+    static var windowRadius: CGFloat {
+        if #available(macOS 26, *) { return 14 }
+        return 10
+    }
 
     /// Hover and press feedback.
     static let quick = Animation.easeOut(duration: 0.15)
