@@ -9,7 +9,8 @@ enum Entry {
         if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
             let url = URL(fileURLWithPath: args[i + 1])
             Snapshot.render(to: url)
-            SettingsView.renderSnapshot(to: url.deletingLastPathComponent().appendingPathComponent("settings.png"))
+            let dir = url.pathExtension.lowercased() == "png" ? url.deletingLastPathComponent() : url
+            SettingsView.renderSnapshot(to: dir.appendingPathComponent("settings.png"))
             exit(0)
         }
         TonearmApp.main()
