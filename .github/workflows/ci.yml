@@ -38,6 +38,17 @@ jobs:
         run: scripts/swift-warnings.sh build/build.log
       - name: Check app bundle and launch it
         run: EXPECT_SIGNING=adhoc scripts/check-app.sh build/Tonearm.app
+      # Starts the real app, which starts Sparkle, and checks it is still running after 10 s.
+      - name: Live launch
+        run: |
+          start="$(date '+%Y-%m-%d %H:%M:%S')"
+          open -n build/Tonearm.app
+          sleep 10
+          pgrep -x Tonearm > /dev/null || { echo "::error::Tonearm exited during the live launch"; exit 1; }
+          pkill -x Tonearm || true
+          log show --start "$start" --style compact \
+            --predicate 'process == "Tonearm" AND (subsystem BEGINSWITH "org.sparkle-project" OR eventMessage CONTAINS[c] "sparkle")' \
+            | tail -n 40 || true
       - name: Render snapshots
         run: |
           build/Tonearm.app/Contents/MacOS/Tonearm --snapshot build/snapshots
