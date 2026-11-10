@@ -8,6 +8,14 @@ struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var login = LaunchAtLogin.shared
     @ObservedObject private var updater = Updater.shared
+    /// macOS blocks Tonearm's notifications while "Notify on song change" is on.
+    private let notificationsDenied: Bool
+    private let openNotificationSettings: () -> Void
+
+    init(notificationsDenied: Bool = false, openNotificationSettings: @escaping () -> Void = {}) {
+        self.notificationsDenied = notificationsDenied
+        self.openNotificationSettings = openNotificationSettings
+    }
 
     static let repoURL = URL(string: "https://github.com/Abulkosim/tonearm")!
 
@@ -46,6 +54,19 @@ struct SettingsView: View {
             row("Notify on song change") {
                 GreenSwitch(isOn: $settings.notifyOnTrackChange, label: "Notify on song change")
             }
+            if notificationsDenied {
+                HStack(spacing: 8) {
+                    Text("Notifications are off for Tonearm")
+                        .foregroundColor(Theme.secondary)
+                    Spacer(minLength: 8)
+                    Button("Open Settings", action: openNotificationSettings)
+                        .buttonStyle(QuietButtonStyle(color: Theme.accent, hover: Theme.accentHover))
+                }
+                .font(.system(size: 12))
+                .frame(height: 24)
+                .padding(.bottom, 4)
+                .transition(.opacity)
+            }
 
             divider
 
@@ -68,19 +89,21 @@ struct SettingsView: View {
             row("Global shortcuts") {
                 GreenSwitch(isOn: $settings.globalShortcuts, label: "Global shortcuts")
             }
-            ShortcutList(items: Self.globalCombos, keyWidth: 48)
+            // Dimmed while off, so it reads as what the switch turns on.
+            ShortcutList(items: Self.globalCombos, keyWidth: Self.keyColumn)
+                .opacity(settings.globalShortcuts ? 1 : 0.5)
                 .padding(.bottom, 4)
                 .accessibilityElement(children: .combine)
 
             divider
 
-            Text("Shortcuts")
+            Text("In the player")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(Theme.secondary)
                 .frame(height: 24)
             HStack(alignment: .top, spacing: 16) {
-                ShortcutList(items: Array(KeyCommand.help.prefix(4)), keyWidth: 48)
-                ShortcutList(items: Array(KeyCommand.help.dropFirst(4)), keyWidth: 24)
+                ShortcutList(items: Array(KeyCommand.help.prefix(4)), keyWidth: Self.keyColumn)
+                ShortcutList(items: Array(KeyCommand.help.dropFirst(4)), keyWidth: 28)
             }
             .padding(.bottom, 4)
             .accessibilityElement(children: .combine)
@@ -90,29 +113,14 @@ struct SettingsView: View {
             row("Check for updates automatically") {
                 GreenSwitch(isOn: $updater.automaticallyChecks, label: "Check for updates automatically")
             }
-            Button("Check for Updates…") { updater.checkForUpdates() }
-                .buttonStyle(QuietButtonStyle(color: Theme.accent, hover: Theme.accentHover))
+            actionRow("Check for Updates…") { updater.checkForUpdates() }
                 .disabled(!updater.canCheck)
-                .frame(height: 24)
-                .padding(.bottom, 4)
 
             divider
 
-            Button(action: { NSApp.terminate(nil) }) {
-                HStack {
-                    Text("Quit Tonearm")
-                    Spacer()
-                    Text("⌘Q")
-                        .font(.system(size: 12))
-                        .foregroundColor(Theme.muted)
-                }
-                .padding(.horizontal, 8)
-                .frame(height: 32)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(QuietButtonStyle(color: .white, hover: .white, hoverFill: true))
-            .keyboardShortcut("q", modifiers: .command)
-            .padding(.horizontal, -8)
+            actionRow("Show welcome") { Onboarding.showWelcome() }
+            actionRow("Quit Tonearm", keys: "⌘Q") { NSApp.terminate(nil) }
+                .keyboardShortcut("q", modifiers: .command)
 
             HStack {
                 Text("Version \(Self.version)")
@@ -126,12 +134,35 @@ struct SettingsView: View {
         }
         .font(.system(size: 13))
         .foregroundColor(.white)
-        .animation(.easeOut(duration: 0.15), value: settings.menuBarStyle)
-        .animation(.easeOut(duration: 0.15), value: login.needsApproval)
+        .animation(Theme.ease, value: settings.menuBarStyle)
+        .animation(Theme.ease, value: login.needsApproval)
+        .animation(Theme.ease, value: settings.globalShortcuts)
+        .animation(Theme.ease, value: notificationsDenied)
         .onAppear { login.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             login.refresh()
         }
+    }
+
+    /// Width of the keycap column, so both shortcut lists line up.
+    private static let keyColumn: CGFloat = 64
+
+    /// Full-width row that acts like a menu item: a faint surface on hover.
+    private func actionRow(_ title: String, keys: String? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title)
+                Spacer()
+                if let keys {
+                    KeyCap(keys)
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 32)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(QuietButtonStyle(color: .white, hover: .white, hoverFill: true))
+        .padding(.horizontal, -8)
     }
 
     private var divider: some View {
@@ -209,7 +240,8 @@ private struct SegmentedChoice<Value: Hashable>: View {
 }
 
 /// A 30x18 switch: grey track when off, green when on, white knob that slides.
-private struct GreenSwitch: View {
+/// Drawn by hand so snapshots can render it. Also used by the welcome window.
+struct GreenSwitch: View {
     @Binding var isOn: Bool
     let label: String
 
@@ -229,32 +261,45 @@ private struct GreenSwitch: View {
             .contentShape(Capsule())
             .animation(Theme.ease, value: isOn)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SwitchButtonStyle())
         .accessibilityLabel(label)
         .accessibilityValue(isOn ? "On" : "Off")
     }
 }
 
 /// "− 30 +" control for the menu bar title length.
-private struct LengthStepper: View {
+struct LengthStepper: View {
     @Binding var value: Int
 
     private let range = AppSettings.titleLengthRange
-    private let step = AppSettings.titleLengthStep
+    private static let step = AppSettings.titleLengthStep
+    /// Lowest value the buttons go to: the first multiple of `step` in the range.
+    static let lowest = (AppSettings.titleLengthRange.lowerBound + step - 1) / step * step
+
+    /// The next multiple of 4 up or down from `value`, so any stored length (say 30)
+    /// snaps onto 16, 20, 24, 28… Stays inside the settings range. Pure, for tests.
+    static func stepped(_ value: Int, up: Bool) -> Int {
+        let next = up ? (value / step + 1) * step : ((value + step - 1) / step - 1) * step
+        return min(max(next, lowest), AppSettings.titleLengthRange.upperBound)
+    }
 
     var body: some View {
         HStack(spacing: 0) {
-            stepButton("minus", label: "Shorter", enabled: value > range.lowerBound) {
-                value = AppSettings.clampLength(value - step)
+            stepButton("minus", label: "Shorter", enabled: value > Self.lowest) {
+                value = Self.stepped(value, up: false)
             }
             Text("\(value)")
                 .font(.system(size: 12).monospacedDigit())
-                .frame(width: 24)
+                .frame(width: 28)
                 .accessibilityLabel("Title length \(value) characters")
             stepButton("plus", label: "Longer", enabled: value < range.upperBound) {
-                value = AppSettings.clampLength(value + step)
+                value = Self.stepped(value, up: true)
             }
         }
+        // Same surface as the segmented controls above it.
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.white.opacity(0.06)))
+        .help("Longest menu bar title, in characters")
     }
 
     private func stepButton(_ symbol: String, label: String, enabled: Bool,
@@ -282,17 +327,53 @@ private struct ShortcutList: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(items.indices, id: \.self) { i in
                 HStack(spacing: 8) {
-                    Text(items[i].keys)
-                        .foregroundColor(Theme.muted)
-                        .frame(width: keyWidth, alignment: .leading)
+                    HStack(spacing: 4) {
+                        ForEach(items[i].keys.split(separator: " ").map(String.init), id: \.self) { key in
+                            KeyCap(key)
+                        }
+                    }
+                    .frame(width: keyWidth, alignment: .leading)
                     Text(items[i].action)
+                        .font(.system(size: 12))
                         .foregroundColor(Theme.secondary)
                 }
-                .font(.system(size: 12))
                 .lineLimit(1)
-                .frame(height: 20)
+                .frame(height: 24)
             }
         }
+    }
+}
+
+/// One key or key combo on a small raised cap.
+private struct KeyCap: View {
+    let key: String
+    init(_ key: String) { self.key = key }
+
+    var body: some View {
+        Text(key)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(Theme.secondary)
+            .padding(.horizontal, 4)
+            .frame(minWidth: 20, minHeight: 18)
+            .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Color.white.opacity(0.08)))
+    }
+}
+
+/// The switch's button: no system chrome, our own focus ring.
+private struct SwitchButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        SwitchButtonBody(configuration: configuration)
+    }
+}
+
+private struct SwitchButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    @Environment(\.isFocused) private var isFocused
+
+    var body: some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .focusOutline(Capsule().inset(by: -3), isFocused: isFocused)
     }
 }
 
@@ -313,6 +394,7 @@ private struct QuietButtonBody: View {
     let hover: Color
     let hoverFill: Bool
     @State private var hovering = false
+    @Environment(\.isFocused) private var isFocused
 
     var body: some View {
         configuration.label
@@ -321,6 +403,7 @@ private struct QuietButtonBody: View {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .fill(Color.white.opacity(hoverFill && hovering ? 0.06 : 0))
             )
+            .focusOutline(RoundedRectangle(cornerRadius: 4, style: .continuous), isFocused: isFocused)
             .opacity(configuration.isPressed ? 0.7 : 1)
             .onHover { hovering = $0 }
             .animation(.easeOut(duration: 0.12), value: hovering)
@@ -336,7 +419,7 @@ extension SettingsView {
         let content = SettingsView()
             .padding(16)
             .frame(width: 300)
-            .background(Color(red: 0.07, green: 0.07, blue: 0.07))
+            .background(PlayerTheme.fallback)
             .environment(\.colorScheme, .dark)
         let renderer = ImageRenderer(content: content)
         renderer.scale = 2

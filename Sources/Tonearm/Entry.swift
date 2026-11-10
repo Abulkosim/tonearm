@@ -20,6 +20,8 @@ enum Entry {
 }
 
 struct TonearmApp: App {
+    /// First-run welcome window, and opening the player when Tonearm.app is opened again.
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = PlayerModel()
     @StateObject private var settings = AppSettings.shared
     @StateObject private var launchAtLogin = LaunchAtLogin.shared

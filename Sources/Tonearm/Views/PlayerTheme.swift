@@ -29,16 +29,36 @@ enum PlayerTheme {
     /// Background color crossfade.
     static let slowFade = Animation.easeInOut(duration: 0.6)
 
-    /// `m:ss`, or `h:mm:ss` past an hour.
-    static func time(_ seconds: Double) -> String {
+    /// `m:ss`, or `h:mm:ss` past an hour. `hours` forces `h:mm:ss`, so elapsed and remaining
+    /// time of a long episode read alike.
+    static func time(_ seconds: Double, hours: Bool = false) -> String {
         let total = seconds.isFinite ? max(0, Int(seconds.rounded(.down))) : 0
         let h = total / 3600, m = (total % 3600) / 60, s = total % 60
-        return h > 0
+        return h > 0 || hours
             ? String(format: "%d:%02d:%02d", h, m, s)
             : String(format: "%d:%02d", m, s)
     }
 
+    /// Ring drawn around a control focused from the keyboard, in place of the system's blue one.
+    static let focusRing = Color.white.opacity(0.75)
+
     private static func rgb(_ r: Int, _ g: Int, _ b: Int) -> Color {
         Color(.sRGB, red: Double(r) / 255, green: Double(g) / 255, blue: Double(b) / 255, opacity: 1)
+    }
+}
+
+extension View {
+    /// Outlines the view while it has keyboard focus (Full Keyboard Access or Tab).
+    func focusOutline<S: InsettableShape>(_ shape: S, isFocused: Bool) -> some View {
+        overlay(shape.strokeBorder(PlayerTheme.focusRing, lineWidth: isFocused ? 1.5 : 0))
+    }
+
+    /// Turns off the system's blue focus ring. Our button styles draw their own with `focusOutline`.
+    @ViewBuilder func hidesSystemFocusRing() -> some View {
+        if #available(macOS 14, *) {
+            focusEffectDisabled()
+        } else {
+            self
+        }
     }
 }
