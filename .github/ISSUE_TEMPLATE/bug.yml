@@ -13,8 +13,18 @@ body:
     id: tonearm
     attributes:
       label: Tonearm version
-      description: Shown in Finder → Get Info on Tonearm.app.
-      placeholder: "0.1.0"
+      description: Open the player, click the gear. The version is at the bottom.
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options:
+        - Homebrew
+        - DMG or zip from Releases
+        - Built from source
     validations:
       required: true
   - type: input
