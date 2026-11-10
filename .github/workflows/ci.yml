@@ -36,6 +36,8 @@ jobs:
           scripts/build-app.sh 2>&1 | tee build/build.log
       - name: Report warnings
         run: scripts/swift-warnings.sh build/build.log
+      - name: Check app bundle and launch it
+        run: EXPECT_SIGNING=adhoc scripts/check-app.sh build/Tonearm.app
       - name: Render snapshots
         run: |
           build/Tonearm.app/Contents/MacOS/Tonearm --snapshot build/snapshots
@@ -55,6 +57,41 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+
+  # The release path for the SELF_SIGN_CERT_P12 secret, with a throwaway certificate:
+  # import and trust it, sign inside-out, check the designated requirement, launch.
+  self-signed:
+    name: Self-signed build
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Make and import a throwaway certificate
+        env:
+          CERT_IDENTITY: Tonearm Self-Signed
+          TRUST_CERT: "true"
+        run: |
+          P12_PASSWORD="$(openssl rand -hex 16)"
+          export P12_PASSWORD
+          scripts/make-self-signed-cert.sh "$RUNNER_TEMP/cert"
+          CERT_P12="$(base64 < "$RUNNER_TEMP/cert/tonearm-self-signed.p12" | tr -d '\n')" \
+            CERT_PASSWORD="$P12_PASSWORD" scripts/import-signing-cert.sh
+          rm -rf "$RUNNER_TEMP/cert"
+      - name: Build app
+        env:
+          SIGN_IDENTITY: Tonearm Self-Signed
+        run: scripts/build-app.sh
+      - name: Check app bundle and launch it
+        run: EXPECT_SIGNING=self-signed scripts/check-app.sh build/Tonearm.app
+      - name: Package
+        env:
+          SIGN_IDENTITY: Tonearm Self-Signed
+        run: scripts/package.sh
+      - name: Remove signing keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/tonearm-signing.keychain-db" || true
 
   lint:
     name: Scripts and release notes

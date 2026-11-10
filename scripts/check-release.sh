@@ -20,4 +20,10 @@ plist_version="$(grep -A1 '<key>CFBundleShortVersionString</key>' Resources/Info
 [ "$plist_version" = "$version" ] \
   || fail "Resources/Info.plist CFBundleShortVersionString is $plist_version, expected $version"
 
-echo "release $tag ok"
+plist_build="$(grep -A1 '<key>CFBundleVersion</key>' Resources/Info.plist \
+  | sed -n 's:.*<string>\(.*\)</string>.*:\1:p')"
+build="$(scripts/build-number.sh "$version")"
+[ "$plist_build" = "$build" ] \
+  || fail "Resources/Info.plist CFBundleVersion is $plist_build, expected $build (scripts/build-number.sh $version)"
+
+echo "release $tag ok (build $build)"

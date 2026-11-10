@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # Packages build/Tonearm.app (from scripts/build-app.sh) into dist/:
-#   Tonearm-<version>.zip, Tonearm-<version>.dmg, SHA256SUMS.txt
+#   Tonearm-<version>.zip   the Sparkle update archive
+#   Tonearm-<version>.dmg
+#   Tonearm.zip, Tonearm.dmg  identical copies with stable names, so
+#                             releases/latest/download/Tonearm.dmg always works
+#   SHA256SUMS.txt
 #
 # Environment:
 #   VERSION        File name version. Default: CFBundleShortVersionString of the built app.
-#   SIGN_IDENTITY  "-" (default) leaves the dmg unsigned; a Developer ID identity signs it.
+#   SIGN_IDENTITY  A Developer ID identity signs the dmg. Ad-hoc ("-", the default) and
+#                  self-signed builds leave it unsigned; Gatekeeper ignores those signatures.
 #   NOTARIZE       "true" notarizes and staples the app and the dmg (see scripts/notarize.sh).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -19,7 +24,9 @@ VERSION="${VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionStr
 ZIP="$OUT/Tonearm-$VERSION.zip"
 DMG="$OUT/Tonearm-$VERSION.dmg"
 
-if [ "$NOTARIZE" = true ] && [ "$SIGN_IDENTITY" = "-" ]; then
+developer_id=false
+case "$SIGN_IDENTITY" in "Developer ID Application:"*) developer_id=true ;; esac
+if [ "$NOTARIZE" = true ] && [ "$developer_id" != true ]; then
   echo "NOTARIZE=true needs a Developer ID SIGN_IDENTITY" >&2
   exit 1
 fi
@@ -50,7 +57,7 @@ for attempt in 1 2 3; do
   sleep 5
 done
 
-if [ "$SIGN_IDENTITY" != "-" ]; then
+if [ "$developer_id" = true ]; then
   codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
   codesign --verify --verbose=2 "$DMG"
 fi
@@ -61,6 +68,8 @@ if [ "$NOTARIZE" = true ]; then
 fi
 hdiutil verify "$DMG"
 
-(cd "$OUT" && shasum -a 256 "$(basename "$ZIP")" "$(basename "$DMG")" > SHA256SUMS.txt)
+cp "$ZIP" "$OUT/Tonearm.zip"
+cp "$DMG" "$OUT/Tonearm.dmg"
+(cd "$OUT" && shasum -a 256 "$(basename "$ZIP")" "$(basename "$DMG")" Tonearm.zip Tonearm.dmg > SHA256SUMS.txt)
 cat "$OUT/SHA256SUMS.txt"
 ls -l "$OUT"
