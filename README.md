@@ -9,13 +9,34 @@ A small player in the macOS menu bar for the Spotify desktop app.
 ## Features
 
 - The current song in the menu bar, with or without the artist, or just an icon.
-- Click it to see the cover, title and artist.
-- Play, pause, next and previous.
+- Click it to see the cover, title and artist, with the background colored from the cover.
+- Play, pause, next, previous, shuffle and repeat.
 - Drag the progress bar to seek. Drag the volume bar to change Spotify's volume.
-- The background takes its colors from the cover.
+- Hover the cover to copy the song link or open the song in Spotify.
+- A compact layout with a small cover.
+- Keyboard shortcuts, and optional global shortcuts that work in any app.
+- Optional notification when the song changes.
 - Updates as soon as Spotify changes track or state.
 - Optional launch at login.
 - No account, no login, no Dock icon.
+
+![Compact layout](docs/images/compact.png)
+
+## Shortcuts
+
+While the window is open:
+
+| Key | Action |
+| --- | --- |
+| Space | Play or pause |
+| ← → | Seek 10 seconds |
+| ⌘← ⌘→ | Previous, next |
+| ↑ ↓ | Volume |
+| S, R | Shuffle, repeat |
+| ⌘, | Settings |
+| ⌘Q | Quit |
+
+Global shortcuts, if you turn them on in settings: ⌃⌥P play or pause, ⌃⌥N next, ⌃⌥B previous.
 
 ## Install
 
