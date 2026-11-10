@@ -34,7 +34,7 @@ enum Snapshot {
             ("not-running", player(nil, notRunning)),
             ("not-authorized", player(nil, .init(status: .notAuthorized))),
             ("not-installed", player(nil, .init(status: .notInstalled))),
-            ("asking-permission", player(nil, .init(status: .notAuthorized, askingPermission: true))),
+            ("waiting-for-permission", player(nil, askingPermission: true)),
             ("framed-player", framed(player(.playing, playing))),
             ("framed-player-warm", framed(player(.playing, playing, cover: .warm))),
             ("framed-compact", framed(player(.playing, compact))),
@@ -48,8 +48,9 @@ enum Snapshot {
 
     @MainActor
     private static func player(_ state: PlayState?, _ preview: PlayerView.Preview = .init(),
-                               cover: SampleCover = .teal) -> AnyView {
+                               cover: SampleCover = .teal, askingPermission: Bool = false) -> AnyView {
         let model = PlayerModel(live: false)
+        if askingPermission { model.setPreviewAskingPermission() }
         if let state {
             let track = state == .stopped ? nil : Track(
                 id: "spotify:track:0000000000000000000000", title: "Sample Song Title",

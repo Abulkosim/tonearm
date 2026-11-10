@@ -13,7 +13,6 @@ struct PlayerView: View {
         var coverHover = false
         /// Text of the note shown next to the cover buttons, like "Copied".
         var coverNote: String?
-        var askingPermission = false
     }
 
     /// Nil in the app.
@@ -80,14 +79,6 @@ struct PlayerView: View {
                     .padding(.bottom, 12)
                 if status == .ready {
                     largePlayer
-                } else if preview?.askingPermission ?? model.isAskingPermission {
-                    StatusMessage(
-                        symbol: "hand.raised.fill",
-                        title: "Waiting for permission",
-                        detail: "Click OK in the macOS dialog to let Tonearm control Spotify"
-                    ) {
-                        EmptyView()
-                    }
                 } else {
                     statusScreen
                 }
@@ -184,6 +175,14 @@ struct PlayerView: View {
                     Text("Get it at spotify.com/download").underline()
                 }
                 .buttonStyle(TextButtonStyle())
+            }
+        case .notAuthorized where model.isAskingPermission:
+            StatusMessage(
+                symbol: "hand.raised.fill",
+                title: "Waiting for permission",
+                detail: "Click OK in the macOS dialog to let Tonearm control Spotify"
+            ) {
+                EmptyView()
             }
         case .notAuthorized:
             StatusMessage(
