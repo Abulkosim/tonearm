@@ -3,6 +3,9 @@ import Foundation
 
 /// System-wide shortcuts through Carbon's RegisterEventHotKey. Unlike a global key monitor,
 /// this needs no Accessibility permission. Handlers run on the main thread.
+///
+/// Key codes are physical keys, so the shortcuts work with any keyboard layout, Cyrillic
+/// included. ⌃⌥Space is avoided on purpose: macOS uses it to switch input sources.
 final class HotKeys {
     enum Action: UInt32, CaseIterable {
         case playPause = 1
@@ -11,18 +14,18 @@ final class HotKeys {
 
         var keyCode: Int {
             switch self {
-            case .playPause: return kVK_Space
-            case .next: return kVK_RightArrow
-            case .previous: return kVK_LeftArrow
+            case .playPause: return kVK_ANSI_P
+            case .next: return kVK_ANSI_N
+            case .previous: return kVK_ANSI_B
             }
         }
 
         /// Shown in settings.
         var keys: String {
             switch self {
-            case .playPause: return "⌃⌥Space"
-            case .next: return "⌃⌥→"
-            case .previous: return "⌃⌥←"
+            case .playPause: return "⌃⌥P"
+            case .next: return "⌃⌥N"
+            case .previous: return "⌃⌥B"
             }
         }
 

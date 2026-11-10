@@ -50,7 +50,7 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(layout.rawValue, forKey: Key.layout) }
     }
 
-    /// ⌃⌥Space, ⌃⌥→ and ⌃⌥← control Spotify from any app. See `HotKeys`.
+    /// ⌃⌥P, ⌃⌥N and ⌃⌥B control Spotify from any app. See `HotKeys`.
     @Published var globalShortcuts: Bool {
         didSet { defaults.set(globalShortcuts, forKey: Key.globalShortcuts) }
     }

@@ -143,6 +143,17 @@ final class MenuBarTitleTests: XCTestCase {
         XCTAssertEqual(Set(codes).count, codes.count)
         XCTAssertEqual(Set(HotKeys.Action.allCases.map(\.keys)).count, codes.count)
     }
+
+    func testHotKeysAvoidInputSourceSwitching() {
+        // ⌃⌥Space switches input sources on Macs with more than one keyboard layout.
+        XCTAssertFalse(HotKeys.Action.allCases.map(\.keyCode).contains(49))
+        XCTAssertEqual(HotKeys.Action.playPause.keys, "⌃⌥P")
+        XCTAssertEqual(HotKeys.Action.next.keys, "⌃⌥N")
+        XCTAssertEqual(HotKeys.Action.previous.keys, "⌃⌥B")
+        XCTAssertEqual(HotKeys.Action.playPause.keyCode, 0x23)
+        XCTAssertEqual(HotKeys.Action.next.keyCode, 0x2D)
+        XCTAssertEqual(HotKeys.Action.previous.keyCode, 0x0B)
+    }
 }
 
 /// Model commands on a preview model. Spotify is not running in tests, so nothing is sent.
@@ -184,6 +195,14 @@ final class PlayerModelCommandTests: XCTestCase {
         XCTAssertTrue(m.repeating)
         m.toggleRepeat()
         XCTAssertFalse(m.repeating)
+    }
+
+    func testAskingPermissionPreview() {
+        let m = PlayerModel(live: false)
+        XCTAssertFalse(m.isAskingPermission)
+        m.setPreviewAskingPermission()
+        XCTAssertTrue(m.isAskingPermission)
+        XCTAssertEqual(m.status, .notAuthorized)
     }
 
     func testTrackURL() {

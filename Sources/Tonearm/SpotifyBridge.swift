@@ -208,6 +208,10 @@ final class SpotifyBridge {
     private var commandScripts: [String: NSAppleScript] = [:]
     private var authorized = false
 
+    /// Called with true just before macOS may show its Automation prompt, and with false
+    /// once the user answered. Runs on the main actor. Set it once, before the first fetch.
+    var permissionPromptChanged: (@MainActor (Bool) -> Void)?
+
     /// Safe on any thread.
     var isRunning: Bool {
         NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleID).contains { !$0.isTerminated }
@@ -337,7 +341,8 @@ final class SpotifyBridge {
     func checkPermission(ask: Bool, _ done: @escaping (Permission) -> Void) {
         guard isRunning else { return done(.notRunning) }
         queue.async {
-            let p = Self.determinePermission(ask: ask)
+            var p = Self.determinePermission(ask: false)
+            if ask, p == .needsConsent { p = self.askForPermission() }
             self.authorized = p == .granted
             DispatchQueue.main.async { done(p) }
         }
@@ -387,7 +392,7 @@ final class SpotifyBridge {
         guard !authorized else { return nil }
         // Ask without a prompt first. Only an undecided user gets the prompt, once.
         var permission = Self.determinePermission(ask: false)
-        if permission == .needsConsent { permission = Self.determinePermission(ask: true) }
+        if permission == .needsConsent { permission = askForPermission() }
         switch permission {
         case .granted:
             authorized = true
@@ -400,6 +405,15 @@ final class SpotifyBridge {
             // Let the AppleScript call trigger the prompt itself.
             return nil
         }
+    }
+
+    /// Runs on `queue`. Shows the Automation prompt and blocks until the user answers.
+    private func askForPermission() -> Permission {
+        let changed = permissionPromptChanged
+        if let changed { Task { @MainActor in changed(true) } }
+        let permission = Self.determinePermission(ask: true)
+        if let changed { Task { @MainActor in changed(false) } }
+        return permission
     }
 
     private static func determinePermission(ask: Bool) -> Permission {

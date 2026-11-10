@@ -24,6 +24,9 @@ final class PlayerModel: ObservableObject {
     @Published private(set) var artworkColors: ArtworkColors?
     /// True from `openSpotify()` until Spotify answers, or 20 seconds pass.
     @Published private(set) var isLaunching = false
+    /// True while macOS shows its "Tonearm wants to control Spotify" prompt. `status` is
+    /// `.notAuthorized` meanwhile (never `.notRunning` while Spotify runs), so check this first.
+    @Published private(set) var isAskingPermission = false
     /// True while the popover is open. Polls faster while visible. The view sets it on
     /// appear and disappear; the model also follows the popover window, because a
     /// MenuBarExtra window does not reliably call those again after the first open.
@@ -85,6 +88,7 @@ final class PlayerModel: ObservableObject {
         self.live = live
         guard live else { return }
 
+        bridge.permissionPromptChanged = { [weak self] asking in self?.permissionPromptChanged(asking) }
         observers.append(SpotifyBridge.observeChanges { [weak self] update in
             Task { @MainActor in self?.notificationArrived(update) }
         })
@@ -157,6 +161,13 @@ final class PlayerModel: ObservableObject {
             // Turn the switch back off if macOS will not show them.
             if !granted { self?.settings.notifyOnTrackChange = false }
         }
+    }
+
+    private func permissionPromptChanged(_ asking: Bool) {
+        let asking = asking && spotifyRunning
+        if isAskingPermission != asking { isAskingPermission = asking }
+        // Spotify is running and the answer is pending: not ready, but not "not running" either.
+        if asking, status != .ready { status = .notAuthorized }
     }
 
     private func perform(_ action: HotKeys.Action) {
@@ -361,6 +372,7 @@ final class PlayerModel: ObservableObject {
     /// Resets to the idle state. Never sends Apple Events.
     private func spotifyStopped() {
         spotifyRunning = false
+        if isAskingPermission { isAskingPermission = false }
         fetchQueued = false
         delayedRefresh?.cancel()
         delayedRefresh = nil
@@ -608,9 +620,16 @@ final class PlayerModel: ObservableObject {
         }
     }
 
+    /// Used by the snapshot renderer: the state while the permission prompt is open.
+    func setPreviewAskingPermission() {
+        status = .notAuthorized
+        isAskingPermission = true
+    }
+
     /// Used by the snapshot renderer and previews.
     func setPreview(_ playback: Playback, artwork: NSImage?) {
         status = .ready
+        isAskingPermission = false
         self.playback = playback
         self.positionDate = Date()
         self.artwork = artwork
