@@ -5,7 +5,7 @@
 
 A mini player for the Spotify desktop app that lives in the Mac menu bar.
 
-<img src="docs/images/player.png" width="412" alt="Tonearm open under the menu bar, showing the cover, song title, artist, progress bar, playback buttons and volume">
+<img src="docs/images/demo.gif" width="412" alt="Tonearm open under the menu bar: a song plays, the next song fades in with the background taking its cover's color, then it pauses">
 
 Click the song in the menu bar to see the cover, title and artist. Play, pause, skip, shuffle, repeat, seek and change the volume from there. There is a compact layout with a small cover, keyboard shortcuts, and optional global shortcuts that work in any app. No account and no login.
 
