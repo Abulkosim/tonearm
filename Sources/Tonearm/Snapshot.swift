@@ -59,13 +59,16 @@ enum Snapshot {
 
     /// Sample songs: an ordinary one, and a long Cyrillic title and artist to check cutting.
     enum SampleTrack {
-        case standard, long
+        case standard, second, long
 
         var track: Track {
             switch self {
             case .standard:
                 return Track(id: "spotify:track:0000000000000000000000", title: "Sample Song Title",
                              artist: "Sample Artist", album: "Sample Album", artworkURL: nil, duration: 214)
+            case .second:
+                return Track(id: "spotify:track:2222222222222222222222", title: "Another Sample Song",
+                             artist: "Another Artist", album: "Sample Album", artworkURL: nil, duration: 187)
             case .long:
                 return Track(id: "spotify:track:1111111111111111111111",
                              title: "Песня о далёкой звезде над ночным городом (Remastered 2024)",
@@ -87,13 +90,13 @@ enum Snapshot {
 
     @MainActor
     private static func model(_ state: PlayState?, cover: SampleCover = .teal, track sample: SampleTrack = .standard,
-                              askingPermission: Bool = false) -> PlayerModel {
+                              position: Double = 83, askingPermission: Bool = false) -> PlayerModel {
         let model = PlayerModel(live: false)
         if askingPermission { model.setPreviewAskingPermission() }
         if let state {
             let track = state == .stopped ? nil : sample.track
             model.setPreview(
-                Playback(state: state, track: track, position: track == nil ? 0 : 83, volume: 70),
+                Playback(state: state, track: track, position: track == nil ? 0 : position, volume: 70),
                 artwork: track == nil ? nil : sampleArtwork(cover)
             )
         }
@@ -130,9 +133,10 @@ enum Snapshot {
 
     /// Puts the popover under a mock menu bar on a plain desktop, the way people see it.
     /// `bar` sets the menu bar title options; the label comes from `MenuBarLabel`.
+    /// `minHeight` pads the desktop below, so frames of different scenes match in size.
     @MainActor
     private static func framed(_ model: PlayerModel, _ preview: PlayerView.Preview,
-                               bar: AppSettings? = nil) -> AnyView {
+                               bar: AppSettings? = nil, minHeight: CGFloat = 0) -> AnyView {
         let margin: CGFloat = 56
         let settings = bar ?? plainBar()
         let popover = PlayerView(preview: preview).environmentObject(model)
@@ -147,6 +151,7 @@ enum Snapshot {
                     .padding(.bottom, margin)
             }
             .frame(width: 300 + margin * 2, alignment: .leading)
+            .frame(minHeight: minHeight, alignment: .top)
             .background(desktop)
             .environment(\.colorScheme, .dark)
         )
@@ -224,11 +229,20 @@ enum Snapshot {
 
     @MainActor
     private static func write(_ view: AnyView, to url: URL) {
+        guard let cg = image(view) else { fail("render failed for \(url.lastPathComponent)") }
+        write(cg, to: url)
+    }
+
+    @MainActor
+    private static func image(_ view: AnyView) -> CGImage? {
         let renderer = ImageRenderer(content: view)
         renderer.scale = 2
-        guard let cg = renderer.cgImage,
-              let png = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:])
-        else { fail("render failed for \(url.lastPathComponent)") }
+        return renderer.cgImage
+    }
+
+    private static func write(_ cg: CGImage, to url: URL) {
+        guard let png = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:])
+        else { fail("cannot encode \(url.lastPathComponent)") }
         do {
             try png.write(to: url)
         } catch {
@@ -292,5 +306,89 @@ enum Snapshot {
             NSBezierPath(ovalIn: NSRect(x: 516, y: 516, width: 48, height: 48)).fill()
             return true
         }
+    }
+}
+
+// MARK: - README animation
+
+extension Snapshot {
+    /// One step of the README animation: a popover state held for a moment.
+    private struct DemoScene {
+        var state: PlayState
+        var preview: PlayerView.Preview
+        var cover: SampleCover
+        var track: SampleTrack
+        /// Song position at the start of the scene; it advances while playing.
+        var position: Double
+    }
+
+    /// Frames per second of the animation. scripts/make-demo.sh uses the same rate.
+    static let demoFPS = 10
+
+    /// Writes the README animation as numbered PNG frames: a song plays, the next song
+    /// fades in with its own colors, it pauses, then the compact layout and settings.
+    /// scripts/make-demo.sh turns the frames into docs/images/demo.gif.
+    @MainActor
+    static func renderDemo(to dir: URL) {
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        } catch {
+            fail("cannot create \(dir.path): \(error)")
+        }
+        let scenes = [
+            DemoScene(state: .playing, preview: .init(shuffling: true), cover: .teal, track: .standard, position: 83),
+            DemoScene(state: .playing, preview: .init(shuffling: true), cover: .warm, track: .second, position: 4),
+            DemoScene(state: .paused, preview: .init(shuffling: true), cover: .warm, track: .second, position: 7),
+            DemoScene(state: .playing, preview: .init(layout: .compact, shuffling: true),
+                      cover: .warm, track: .second, position: 7),
+            DemoScene(state: .playing, preview: .init(settingsOpen: true), cover: .warm, track: .second, position: 10),
+        ]
+        let holdFrames = demoFPS * 5 / 2
+        let fadeFrames = 5
+
+        func render(_ scene: DemoScene, at seconds: Double, minHeight: CGFloat) -> CGImage {
+            let position = scene.state == .playing ? scene.position + seconds : scene.position
+            let view = framed(model(scene.state, cover: scene.cover, track: scene.track, position: position),
+                              scene.preview, minHeight: minHeight)
+            guard let cg = image(view) else { fail("render failed for a demo frame") }
+            return cg
+        }
+
+        // The compact layout is shorter than the others; pad every frame to the tallest.
+        let tallest = scenes.map { CGFloat(render($0, at: 0, minHeight: 0).height) / 2 }.max() ?? 0
+
+        var index = 0
+        func emit(_ cg: CGImage) {
+            index += 1
+            write(cg, to: dir.appendingPathComponent(String(format: "frame-%04d.png", index)))
+        }
+        for (i, scene) in scenes.enumerated() {
+            var last: CGImage?
+            for f in 0..<holdFrames {
+                let cg = render(scene, at: Double(f) / Double(demoFPS), minHeight: tallest)
+                emit(cg)
+                last = cg
+            }
+            guard let from = last else { continue }
+            let next = render(scenes[(i + 1) % scenes.count], at: 0, minHeight: tallest)
+            for f in 1...fadeFrames {
+                emit(blend(from, next, amount: CGFloat(f) / CGFloat(fadeFrames + 1)))
+            }
+        }
+    }
+
+    /// Draws `to` over `from` at the given opacity.
+    private static func blend(_ from: CGImage, _ to: CGImage, amount: CGFloat) -> CGImage {
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: nil, width: from.width, height: from.height, bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { fail("cannot blend demo frames") }
+        let rect = CGRect(x: 0, y: 0, width: from.width, height: from.height)
+        ctx.draw(from, in: rect)
+        ctx.setAlpha(amount)
+        ctx.draw(to, in: rect)
+        guard let out = ctx.makeImage() else { fail("cannot blend demo frames") }
+        return out
     }
 }
