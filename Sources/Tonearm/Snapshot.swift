@@ -326,7 +326,7 @@ extension Snapshot {
     static let demoFPS = 10
 
     /// Writes the README animation as numbered PNG frames: a song plays, the next song
-    /// fades in with its own colors, it pauses, then the compact layout and settings.
+    /// fades in with its own colors, it pauses, then the compact layout.
     /// scripts/make-demo.sh turns the frames into docs/images/demo.gif.
     @MainActor
     static func renderDemo(to dir: URL) {
@@ -341,7 +341,6 @@ extension Snapshot {
             DemoScene(state: .paused, preview: .init(shuffling: true), cover: .warm, track: .second, position: 7),
             DemoScene(state: .playing, preview: .init(layout: .compact, shuffling: true),
                       cover: .warm, track: .second, position: 7),
-            DemoScene(state: .playing, preview: .init(settingsOpen: true), cover: .warm, track: .second, position: 10),
         ]
         let holdFrames = demoFPS * 5 / 2
         let fadeFrames = 5
@@ -354,7 +353,7 @@ extension Snapshot {
             return cg
         }
 
-        // The compact layout is shorter than the others; pad every frame to the tallest.
+        // The compact layout is shorter than the large one; pad every frame to the tallest.
         let tallest = scenes.map { CGFloat(render($0, at: 0, minHeight: 0).height) / 2 }.max() ?? 0
 
         var index = 0
