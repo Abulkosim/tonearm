@@ -13,7 +13,11 @@ enum Entry {
             SettingsView.renderSnapshot(to: dir.appendingPathComponent("settings.png"))
             exit(0)
         }
-        // Runs once the app's run loop is up. Never reached in --snapshot runs or tests.
+        if let i = args.firstIndex(of: "--demo"), i + 1 < args.count {
+            Snapshot.renderDemo(to: URL(fileURLWithPath: args[i + 1]))
+            exit(0)
+        }
+        // Runs once the app's run loop is up. Never reached in --snapshot or --demo runs, or tests.
         Task { @MainActor in Updater.shared.start() }
         TonearmApp.main()
     }
