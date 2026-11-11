@@ -38,9 +38,5 @@ jobs:
           path: |
             build/demo.gif
             build/demo-frames/frame-0001.png
-            build/demo-frames/frame-0028.png
-            build/demo-frames/frame-0031.png
-            build/demo-frames/frame-0061.png
-            build/demo-frames/frame-0091.png
           if-no-files-found: error
           retention-days: 14
