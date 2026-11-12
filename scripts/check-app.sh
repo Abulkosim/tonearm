@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Checks a built Tonearm.app: bundle layout, Sparkle.framework, signatures,
 # entitlements, architectures, and that it launches on arm64 and (with Rosetta)
-# x86_64, which proves dyld finds Sparkle.
+# x86_64, which proves dyld finds Sparkle. CI runners don't enforce library
+# validation, so a launch there does not prove a launch on a real Mac.
 # Usage: scripts/check-app.sh <Tonearm.app>
 #
 # Environment (all optional):
@@ -50,9 +51,16 @@ done
 codesign --verify --deep --strict --verbose=2 "$app"
 codesign -dvv --entitlements - "$app" > "$work/app.txt" 2>&1
 grep -q 'com.apple.security.automation.apple-events' "$work/app.txt" || fail "no Apple Events entitlement"
-grep -Eq 'flags=0x[0-9a-f]+\(.*runtime' "$work/app.txt" || fail "no hardened runtime"
 codesign -dvv "$fw" > "$work/fw.txt" 2>&1
-grep -Eq 'flags=0x[0-9a-f]+\(.*runtime' "$work/fw.txt" || fail "Sparkle.framework has no hardened runtime"
+# Only Developer ID builds may use the hardened runtime: without a Team ID, its library
+# validation stops dyld from loading Sparkle on real Macs (CI runners don't enforce it).
+for f in app fw; do
+  if grep -Eq 'flags=0x[0-9a-f]+\(.*runtime' "$work/$f.txt"; then
+    [ "${EXPECT_SIGNING:-}" = developer-id ] || fail "$f has the hardened runtime without a Developer ID"
+  else
+    [ "${EXPECT_SIGNING:-}" != developer-id ] || fail "$f has no hardened runtime"
+  fi
+done
 app_authority="$(grep '^Authority=' "$work/app.txt" | head -n 1 || true)"
 fw_authority="$(grep '^Authority=' "$work/fw.txt" | head -n 1 || true)"
 [ "$app_authority" = "$fw_authority" ] || fail "app ($app_authority) and Sparkle ($fw_authority) are signed differently"
