@@ -17,6 +17,9 @@ import SwiftUI
 //    We re-check when the window opens or something else resizes it. The window's content
 //    min and max size are pinned to the same size, so nothing else can hold it at an old
 //    size (v0.3.1: switching from the compact player to settings left a 158 pt window).
+// 5. SwiftUI can keep more than one copy of the content in the window (v0.3.2 showed two),
+//    each with its own fitter. Only the newest one that is attached or measured owns the
+//    window; the others leave it alone, so a stale copy can't shrink it back.
 // 3. The content is pinned to the top of whatever space it gets, and the caller's background
 //    goes outside this modifier, so it always fills the window edge to edge, even for the
 //    few frames of a resize.
@@ -66,19 +69,56 @@ final class WindowFitter: ObservableObject {
     /// never fight SwiftUI in a loop.
     private var reasserts = 0
     /// `log stream --predicate 'subsystem == "io.github.abulkosim.tonearm"'` shows these.
+    /// Running the binary with TONEARM_DEBUG_WINDOW=1 also prints them to stderr.
     private static let log = Logger(subsystem: "io.github.abulkosim.tonearm", category: "window")
+    private static let debug = ProcessInfo.processInfo.environment["TONEARM_DEBUG_WINDOW"] != nil
+    /// The fitter that controls each window. Weak on both sides.
+    private static let owners = NSMapTable<NSWindow, WindowFitter>.weakToWeakObjects()
+    private static var nextID = 0
+    /// Short id for the logs, to tell copies apart.
+    private let id: Int
+
+    init() {
+        Self.nextID += 1
+        id = Self.nextID
+    }
+
+    private func note(_ message: String, error: Bool = false) {
+        let line = "fitter \(id): \(message)"
+        if error {
+            Self.log.error("\(line, privacy: .public)")
+        } else {
+            Self.log.notice("\(line, privacy: .public)")
+        }
+        if Self.debug { NSLog("Tonearm %@", line) }
+    }
+
+    private var isOwner: Bool {
+        guard let window else { return false }
+        return Self.owners.object(forKey: window) === self
+    }
+
+    /// Makes this fitter the one that sizes its window.
+    private func claim(_ reason: String) {
+        guard let window, !isOwner else { return }
+        Self.owners.setObject(self, forKey: window)
+        note("owns the window (\(reason))")
+    }
 
     func contentSizeChanged(_ size: CGSize) {
         guard size != contentSize else { return }
         let first = contentSize == .zero
+        note("content \(Self.text(contentSize)) -> \(Self.text(size))")
         contentSize = size
         reasserts = 0
+        claim("measured")
         // Let SwiftUI finish this layout pass before touching the window.
         Task { @MainActor in self.fit(animate: !first) }
     }
 
     func windowShown() {
         reasserts = 0
+        claim("shown")
         Task { @MainActor in self.fit(animate: false) }
     }
 
@@ -88,7 +128,11 @@ final class WindowFitter: ObservableObject {
         observers.forEach { NotificationCenter.default.removeObserver($0) }
         observers = []
         self.window = window
-        guard let window else { return }
+        guard let window else {
+            note("left its window")
+            return
+        }
+        claim("attached")
 
         Self.hideSystemBackground(of: window, keeping: view)
         let center = NotificationCenter.default
@@ -105,14 +149,14 @@ final class WindowFitter: ObservableObject {
 
     private func windowResizedElsewhere() {
         // Our own setFrame also posts this; only a size we did not ask for counts.
-        guard Date() > animatingUntil, needsFit, let window else { return }
+        guard isOwner, Date() > animatingUntil, needsFit, let window else { return }
         let size = window.contentRect(forFrameRect: window.frame).size
         guard reasserts < 3 else {
-            Self.log.error("gave up: window \(Self.text(size), privacy: .public), content \(Self.text(self.contentSize), privacy: .public)")
+            note("gave up: window \(Self.text(size)), content \(Self.text(contentSize))", error: true)
             return
         }
         reasserts += 1
-        Self.log.notice("resized elsewhere to \(Self.text(size), privacy: .public), refit \(self.reasserts)")
+        note("resized elsewhere to \(Self.text(size)), refit \(reasserts)")
         fit(animate: false)
     }
 
@@ -126,9 +170,12 @@ final class WindowFitter: ObservableObject {
     /// Sets the window's content size to the measured size, top edge fixed.
     private func fit(animate: Bool) {
         guard let window, needsFit else { return }
+        guard isOwner else {
+            note("needs \(Self.text(contentSize)) but another fitter owns the window")
+            return
+        }
         let current = window.contentRect(forFrameRect: window.frame)
-        let maxSize = window.contentMaxSize
-        Self.log.notice("fit \(Self.text(current.size), privacy: .public) -> \(Self.text(self.contentSize), privacy: .public), animate \(animate), was max \(Self.text(maxSize), privacy: .public)")
+        note("fit \(Self.text(current.size)) -> \(Self.text(contentSize)), animate \(animate), was max \(Self.text(window.contentMaxSize))")
         // Pin min and max first, so a limit left from an earlier size can't hold the window.
         window.contentMinSize = contentSize
         window.contentMaxSize = contentSize
@@ -166,9 +213,9 @@ final class WindowFitter: ObservableObject {
         guard let window else { return }
         let size = window.contentRect(forFrameRect: window.frame).size
         if needsFit {
-            Self.log.error("fit missed: window \(Self.text(size), privacy: .public), content \(Self.text(self.contentSize), privacy: .public)")
+            note("fit missed: window \(Self.text(size)), content \(Self.text(contentSize))", error: true)
         } else {
-            Self.log.notice("fit ok: \(Self.text(size), privacy: .public)")
+            note("fit ok: \(Self.text(size))")
         }
     }
 

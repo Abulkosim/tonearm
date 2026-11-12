@@ -2,6 +2,7 @@
 
 | Version | Date (UTC) | Changes |
 | --- | --- | --- |
+| [v0.3.3](changelogs/v0.3.3.md) | 2026-11-12 | Another fix for settings being cut off. |
 | [v0.3.2](changelogs/v0.3.2.md) | 2026-11-12 | Settings fit the window again in the compact layout. |
 | [v0.3.1](changelogs/v0.3.1.md) | 2026-11-12 | Fixes v0.3.0 not opening. |
 | [v0.3.0](changelogs/v0.3.0.md) | 2026-11-11 | Updates itself, keeps the Spotify permission across updates. |
