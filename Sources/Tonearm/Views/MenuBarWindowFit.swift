@@ -19,7 +19,10 @@ import SwiftUI
 //    size (v0.3.1: switching from the compact player to settings left a 158 pt window).
 // 5. SwiftUI can keep more than one copy of the content in the window (v0.3.2 showed two),
 //    each with its own fitter. Only the newest one that is attached or measured owns the
-//    window; the others leave it alone, so a stale copy can't shrink it back.
+//    window; the others leave it alone, so a stale copy can't shrink it back. Showing the
+//    window doesn't claim it: every fitter hears that.
+// 6. SwiftUI also replaces the reader view: the new one arrives, then the old one leaves.
+//    The fitter keeps its window then (v0.2 to v0.3.3 dropped it and never grew again).
 // 3. The content is pinned to the top of whatever space it gets, and the caller's background
 //    goes outside this modifier, so it always fills the window edge to edge, even for the
 //    few frames of a resize.
@@ -118,20 +121,22 @@ final class WindowFitter: ObservableObject {
 
     func windowShown() {
         reasserts = 0
-        claim("shown")
         Task { @MainActor in self.fit(animate: false) }
     }
 
-    fileprivate func attach(to window: NSWindow?, from view: NSView, onWindow: ((NSWindow) -> Void)?) {
-        if let window { onWindow?(window) }
+    func attach(to window: NSWindow?, from view: NSView, onWindow: ((NSWindow) -> Void)? = nil) {
+        guard let window else {
+            // SwiftUI sometimes replaces the reader view: the new one arrives, then the old one
+            // leaves. Forgetting the window here left nothing to resize when settings opened
+            // (v0.2 to v0.3.3). The reference is weak, so a closed window still goes away.
+            note("a reader left the window; keeping it")
+            return
+        }
+        onWindow?(window)
         guard window !== self.window else { return }
         observers.forEach { NotificationCenter.default.removeObserver($0) }
         observers = []
         self.window = window
-        guard let window else {
-            note("left its window")
-            return
-        }
         claim("attached")
 
         Self.hideSystemBackground(of: window, keeping: view)
@@ -205,8 +210,13 @@ final class WindowFitter: ObservableObject {
         }
     }
 
-    private static func text(_ size: CGSize) -> String {
-        "\(Int(size.width.rounded())) x \(Int(size.height.rounded()))"
+    /// "300 x 158". A window's default max size is FLT_MAX, which Int() can't hold (the
+    /// v0.3.3 crash), so huge or non-finite values print as "max".
+    nonisolated static func text(_ size: CGSize) -> String {
+        func number(_ value: CGFloat) -> String {
+            value.isFinite && abs(value) < 100_000 ? String(Int(value.rounded())) : "max"
+        }
+        return "\(number(size.width)) x \(number(size.height))"
     }
 
     private func logResult() {
