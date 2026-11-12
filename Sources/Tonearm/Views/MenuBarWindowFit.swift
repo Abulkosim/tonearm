@@ -1,4 +1,5 @@
 import AppKit
+import os
 import SwiftUI
 
 // Why this exists
@@ -13,7 +14,9 @@ import SwiftUI
 // 1. Measure the content at its ideal height (`fixedSize` + GeometryReader).
 // 2. A zero-size AppKit view finds the hosting NSWindow, and we set the window frame to that
 //    size ourselves, keeping the top edge fixed so the window stays attached to the menu bar.
-//    We re-check when the window opens or something else resizes it.
+//    We re-check when the window opens or something else resizes it. The window's content
+//    min and max size are pinned to the same size, so nothing else can hold it at an old
+//    size (v0.3.1: switching from the compact player to settings left a 158 pt window).
 // 3. The content is pinned to the top of whatever space it gets, and the caller's background
 //    goes outside this modifier, so it always fills the window edge to edge, even for the
 //    few frames of a resize.
@@ -62,6 +65,8 @@ final class WindowFitter: ObservableObject {
     /// Times we undid someone else's resize since the last change of ours. Capped so we
     /// never fight SwiftUI in a loop.
     private var reasserts = 0
+    /// `log stream --predicate 'subsystem == "io.github.abulkosim.tonearm"'` shows these.
+    private static let log = Logger(subsystem: "io.github.abulkosim.tonearm", category: "window")
 
     func contentSizeChanged(_ size: CGSize) {
         guard size != contentSize else { return }
@@ -100,8 +105,14 @@ final class WindowFitter: ObservableObject {
 
     private func windowResizedElsewhere() {
         // Our own setFrame also posts this; only a size we did not ask for counts.
-        guard Date() > animatingUntil, needsFit, reasserts < 3 else { return }
+        guard Date() > animatingUntil, needsFit, let window else { return }
+        let size = window.contentRect(forFrameRect: window.frame).size
+        guard reasserts < 3 else {
+            Self.log.error("gave up: window \(Self.text(size), privacy: .public), content \(Self.text(self.contentSize), privacy: .public)")
+            return
+        }
         reasserts += 1
+        Self.log.notice("resized elsewhere to \(Self.text(size), privacy: .public), refit \(self.reasserts)")
         fit(animate: false)
     }
 
@@ -116,6 +127,11 @@ final class WindowFitter: ObservableObject {
     private func fit(animate: Bool) {
         guard let window, needsFit else { return }
         let current = window.contentRect(forFrameRect: window.frame)
+        let maxSize = window.contentMaxSize
+        Self.log.notice("fit \(Self.text(current.size), privacy: .public) -> \(Self.text(self.contentSize), privacy: .public), animate \(animate), was max \(Self.text(maxSize), privacy: .public)")
+        // Pin min and max first, so a limit left from an earlier size can't hold the window.
+        window.contentMinSize = contentSize
+        window.contentMaxSize = contentSize
 
         var frame = window.frameRect(forContentRect: NSRect(origin: current.origin, size: contentSize))
         frame.origin.x = window.frame.minX
@@ -129,12 +145,30 @@ final class WindowFitter: ObservableObject {
                 ctx.duration = duration
                 ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
                 window.animator().setFrame(frame, display: true)
-            }, completionHandler: { [weak window] in
-                Task { @MainActor in window?.invalidateShadow() }
+            }, completionHandler: { [weak self, weak window] in
+                Task { @MainActor in
+                    window?.invalidateShadow()
+                    self?.logResult()
+                }
             })
         } else {
             window.setFrame(frame, display: true, animate: false)
             window.invalidateShadow()
+            logResult()
+        }
+    }
+
+    private static func text(_ size: CGSize) -> String {
+        "\(Int(size.width.rounded())) x \(Int(size.height.rounded()))"
+    }
+
+    private func logResult() {
+        guard let window else { return }
+        let size = window.contentRect(forFrameRect: window.frame).size
+        if needsFit {
+            Self.log.error("fit missed: window \(Self.text(size), privacy: .public), content \(Self.text(self.contentSize), privacy: .public)")
+        } else {
+            Self.log.notice("fit ok: \(Self.text(size), privacy: .public)")
         }
     }
 

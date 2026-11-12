@@ -29,6 +29,16 @@ gh run download <run-id> -n snapshots
 
 The README animation, `docs/images/demo.gif`, is rendered the same way. `scripts/make-demo.sh` runs `Tonearm --demo` and joins the frames with [gifski](https://gif.ski). The Demo workflow does this on pull requests that touch `Snapshot.swift` and uploads the GIF as the `demo` artifact. When the player's look changes, download it and commit it.
 
+## Window sizing logs
+
+The menu bar window is sized by `Views/MenuBarWindowFit.swift`, and CI can't open it. To see what it does on a real Mac, run this and open the window:
+
+```sh
+log stream --level info --predicate 'subsystem == "io.github.abulkosim.tonearm" AND category == "window"'
+```
+
+`fit missed` or `gave up` means something kept the window from reaching the content's size.
+
 ## App icon
 
 The icon is drawn in code by `scripts/make-icon.swift`. Run `swift scripts/make-icon.swift` on macOS to regenerate `design/icon-1024.png` and `Resources/AppIcon.icns`, and commit both. The Icon workflow renders it on pull requests that touch the script and uploads a preview.
