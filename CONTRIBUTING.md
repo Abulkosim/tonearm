@@ -37,7 +37,7 @@ The menu bar window is sized by `Views/MenuBarWindowFit.swift`, and CI can't ope
 log stream --level info --predicate 'subsystem == "io.github.abulkosim.tonearm" AND category == "window"'
 ```
 
-`fit missed` or `gave up` means something kept the window from reaching the content's size.
+`fit missed` or `gave up` means something kept the window from reaching the content's size. Running `TONEARM_DEBUG_WINDOW=1 /Applications/Tonearm.app/Contents/MacOS/Tonearm` prints the same lines in the terminal, plus the window's view tree.
 
 ## App icon
 
