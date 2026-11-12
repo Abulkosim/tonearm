@@ -51,15 +51,19 @@ if [ -n "${BUILD:-}" ]; then
 fi
 plutil -lint "$PLIST"
 
-# Hardened runtime is required for notarization. Apple Events under the hardened
-# runtime need the automation.apple-events entitlement. Ad-hoc and self-signed
-# builds get no timestamp: Apple's timestamp server only serves Developer IDs.
+# Developer ID builds get the hardened runtime, which notarization requires, and a
+# timestamp. Apple Events under the hardened runtime need the automation.apple-events
+# entitlement.
+# Ad-hoc and self-signed builds get neither. The hardened runtime turns on library
+# validation, which only loads frameworks signed with the app's Team ID, and these
+# signatures have no Team ID: dyld refuses Sparkle.framework and the app dies at
+# launch (v0.3.0). Apple's timestamp server only serves Developer IDs.
 case "$SIGN_IDENTITY" in
-  "Developer ID Application:"*) timestamp=(--timestamp) ;;
-  *) timestamp=(--timestamp=none) ;;
+  "Developer ID Application:"*) options=(--options runtime --timestamp) ;;
+  *) options=(--timestamp=none) ;;
 esac
 sign() {
-  codesign --force --options runtime "${timestamp[@]}" --sign "$SIGN_IDENTITY" "$@"
+  codesign --force "${options[@]}" --sign "$SIGN_IDENTITY" "$@"
 }
 # Inside-out: Sparkle's helpers, the framework, then the app. No --deep.
 fw_version="$(readlink "$FW/Versions/Current")"
