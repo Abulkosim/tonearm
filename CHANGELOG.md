@@ -2,6 +2,7 @@
 
 | Version | Date (UTC) | Changes |
 | --- | --- | --- |
+| [v0.3.4](changelogs/v0.3.4.md) | 2026-11-12 | Fixes settings being cut off and a crash when the window resized. |
 | [v0.3.3](changelogs/v0.3.3.md) | 2026-11-12 | Another fix for settings being cut off. |
 | [v0.3.2](changelogs/v0.3.2.md) | 2026-11-12 | Settings fit the window again in the compact layout. |
 | [v0.3.1](changelogs/v0.3.1.md) | 2026-11-12 | Fixes v0.3.0 not opening. |
