@@ -4,7 +4,7 @@ Be kind. This project follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Build and run
 
-Needs macOS 13 or later and Xcode 15 or later (Swift 5.9). There are no dependencies.
+Needs macOS 13 or later and Xcode 15 or later (Swift 5.9). The only dependency is [Sparkle](https://sparkle-project.org), for updates; SwiftPM fetches it.
 
 ```sh
 scripts/build-app.sh
@@ -63,7 +63,7 @@ The cask lives in `packaging/homebrew/Casks/tonearm.rb` and is copied to the tap
 - Titles and commits use [Conventional Commits](https://www.conventionalcommits.org): `type(scope): summary`, imperative, lowercase. For example `fix(bridge): handle spotify quitting mid-read`.
 - The commit body says what changed and why.
 - CI must pass. Attach the snapshot or a screenshot for visual changes.
-- Talk to Spotify only through AppleScript. No Web API, no login, no third-party packages.
+- Talk to Spotify only through AppleScript. No Web API, no login, no new third-party packages (Sparkle is the only one).
 
 ## Releases
 
