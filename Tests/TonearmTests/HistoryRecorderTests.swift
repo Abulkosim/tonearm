@@ -182,6 +182,18 @@ final class HistoryRecorderTests: XCTestCase {
         XCTAssertTrue(closed.isEmpty)
     }
 
+    @MainActor
+    func testRecorderWithSlowPollsSavesEveryLook() {
+        let sink = Sink()
+        let rec = PlayRecorder(sink: sink, isEnabled: { true })
+        let a = song(duration: 600)
+        for s in stride(from: 0.0, through: 300, by: 30) {
+            rec.observe(track: a, playing: true, position: s, at: t(s))
+        }
+        XCTAssertEqual(sink.saved.count, 10)
+        XCTAssertEqual(Double(sink.saved.last!.msPlayed) / 1000, 300, accuracy: 0.01, "nothing heard is unsaved")
+    }
+
     func testPodcastKind() {
         var r = ListenTracker()
         _ = r.observe(track: song("spotify:episode:e"), playing: true, position: 0, at: t(0))
@@ -197,9 +209,9 @@ final class HistoryRecorderTests: XCTestCase {
         for s in stride(from: 0.0, through: 120, by: 2) {
             rec.observe(track: a, playing: true, position: s, at: t(s))
         }
-        // Saved about every 25 s: a crash would lose less than that.
-        XCTAssertGreaterThanOrEqual(sink.saved.count, 4)
-        XCTAssertLessThanOrEqual(sink.saved.count, 5)
+        // Saved about every 10 s: a crash would lose less than that.
+        XCTAssertGreaterThanOrEqual(sink.saved.count, 11)
+        XCTAssertLessThanOrEqual(sink.saved.count, 13)
         XCTAssertGreaterThanOrEqual(Double(sink.saved.last!.msPlayed) / 1000, 120 - PlayRecorder.saveInterval - 2)
         XCTAssertEqual(Set(sink.saved.map(\.dedupKey)).count, 1, "one row, updated in place")
 
