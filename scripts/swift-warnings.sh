@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Turns compiler warnings in a build log into GitHub annotations and a job summary line.
+# Fails when there is at least one warning.
 # Usage: scripts/swift-warnings.sh build/build.log
 set -euo pipefail
 
@@ -21,4 +22,9 @@ fi
 echo "Swift warnings: $count"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   echo "Swift warnings: $count" >> "$GITHUB_STEP_SUMMARY"
+fi
+# main builds with none; keep it that way.
+if [ "$count" -gt 0 ]; then
+  echo "::error::$count Swift warning(s); fix them"
+  exit 1
 fi
