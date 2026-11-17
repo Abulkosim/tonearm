@@ -164,28 +164,37 @@ final class HistoryStoreTests: XCTestCase {
     }
 
     /// Zips made on a Mac carry __MACOSX/._ files; a broken one must not stop the import.
+    /// The zip is laid out like the CI fixture's (scripts/make-history-fixture.py): the
+    /// history file in a folder, then a junk ._ entry for it under __MACOSX, no folder
+    /// entries and no extra fields. Plain ditto fails on that one with "File exists".
     func testZipWithJunkMacMetadata() throws {
         let src = dir.appendingPathComponent("zipsrc")
-        try FileManager.default.createDirectory(at: src.appendingPathComponent("__MACOSX"),
-                                                withIntermediateDirectories: true)
-        try Data(extended.utf8).write(to: src.appendingPathComponent("Streaming_History_Audio_2024_0.json"))
-        try Data([0, 5, 22, 7, 1, 2, 3]).write(to: src.appendingPathComponent("__MACOSX/._Streaming_History_Audio_2024_0.json"))
+        let file = "Spotify Account Data/Streaming_History_Audio_2024_0.json"
+        let junk = "__MACOSX/Spotify Account Data/._Streaming_History_Audio_2024_0.json"
+        for name in [file, junk] {
+            try FileManager.default.createDirectory(at: src.appendingPathComponent(name).deletingLastPathComponent(),
+                                                    withIntermediateDirectories: true)
+        }
+        try Data(extended.utf8).write(to: src.appendingPathComponent(file))
+        try Data([0, 5, 22, 7] + Array("junk".utf8)).write(to: src.appendingPathComponent(junk))
         let zip = dir.appendingPathComponent("junk.zip")
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
         p.currentDirectoryURL = src
-        p.arguments = ["-q", "-r", zip.path, "."]
+        p.arguments = ["-q", "-D", "-X", zip.path, file, junk]
         try p.run()
         p.waitUntilExit()
         XCTAssertEqual(p.terminationStatus, 0)
-        // For the record: what plain ditto makes of it.
+        // The zip must break plain ditto, or this test proves nothing about the fallback.
         let ditto = Process()
         ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
         ditto.arguments = ["-x", "-k", zip.path, dir.appendingPathComponent("plain-ditto").path]
         ditto.standardError = FileHandle.nullDevice
         try ditto.run()
         ditto.waitUntilExit()
-        print("history: plain ditto on a zip with a junk ._ entry exits \(ditto.terminationStatus)")
+        XCTAssertNotEqual(ditto.terminationStatus, 0, "plain ditto unpacked the junk zip")
+        let tool = try HistoryFiles.unzip(zip, to: dir.appendingPathComponent("unpacked"))
+        print("history: a zip that plain ditto rejects was unpacked by \(tool)")
         let r = try store().sync { try $0.importNow(urls: [zip]) }
         XCTAssertEqual(r.files, 1)
         XCTAssertEqual(r.added, 2)
