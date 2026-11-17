@@ -91,6 +91,8 @@ final class PopoverKeys {
                 return event.window !== player
             }
             if elsewhere { return event }
+            // Typing in a text field (the ListenBrainz token): every key is text.
+            if event.window?.firstResponder is NSText { return event }
             guard let command = KeyCommand.from(keyCode: event.keyCode,
                                                 characters: event.charactersIgnoringModifiers,
                                                 modifiers: event.modifierFlags)

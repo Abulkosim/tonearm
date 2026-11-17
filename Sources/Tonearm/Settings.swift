@@ -64,9 +64,8 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(notifyOnTrackChange, forKey: Key.notifyOnTrackChange) }
     }
 
-    /// Keeps a private history of what plays, for Liner Notes. See `PlayRecorder`. Off until
-    /// the app has a switch for it and says that it records; the change that adds those
-    /// turns it on by default. Unset stays unset, so that change reaches existing users.
+    /// Keeps a private history of what plays, on this Mac, for Liner Notes. See `PlayRecorder`.
+    /// On by default; Settings > History has the switch and says where the history is.
     @Published var recordHistory: Bool {
         didSet { defaults.set(recordHistory, forKey: Key.recordHistory) }
     }
@@ -85,7 +84,7 @@ final class AppSettings: ObservableObject {
         layout = defaults.string(forKey: Key.layout).flatMap(PlayerLayout.init(rawValue:)) ?? .large
         globalShortcuts = defaults.bool(forKey: Key.globalShortcuts)
         notifyOnTrackChange = defaults.bool(forKey: Key.notifyOnTrackChange)
-        recordHistory = defaults.object(forKey: Key.recordHistory) as? Bool ?? false
+        recordHistory = defaults.object(forKey: Key.recordHistory) as? Bool ?? true
         listenBrainz = defaults.bool(forKey: Key.listenBrainz)
     }
 
