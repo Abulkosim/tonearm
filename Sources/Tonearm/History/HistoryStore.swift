@@ -80,9 +80,9 @@ final class HistoryStore: @unchecked Sendable {
         try await onQueueThrowing { try self.musicPageNow(after: cursor, before: before, limit: limit) }
     }
 
-    /// The longest play of each music track, by track id. A stand-in for the length of
-    /// tracks only known from an export, which has no lengths.
-    func longestPlays() async throws -> [Int64: Int64] {
+    /// The longest play of each music track, and the longest that ran to the end, by track
+    /// id. A stand-in for the length of tracks only known from an export, which has no lengths.
+    func longestPlays() async throws -> [Int64: PlayLengths] {
         try await onQueueThrowing { try self.longestPlaysNow() }
     }
 
@@ -420,7 +420,8 @@ final class HistoryStore: @unchecked Sendable {
 
     func musicPageNow(after cursor: ListenCursor?, before: Int64, limit: Int) throws -> [StoredListen] {
         let s = try db().prepare("""
-        SELECT l.id, l.started_at, l.ms_played, t.id, t.title, t.artist, t.album, t.uri, t.duration_ms
+        SELECT l.id, l.started_at, l.ms_played, t.id, t.title, t.artist, t.album, t.uri, t.duration_ms,
+               l.skipped, l.reason_end
         FROM listens l JOIN tracks t ON t.id = l.track_id
         WHERE t.kind = 0 AND l.started_at < ?1 AND (l.started_at > ?2 OR (l.started_at = ?2 AND l.id > ?3))
         ORDER BY l.started_at, l.id LIMIT ?4
@@ -430,19 +431,21 @@ final class HistoryStore: @unchecked Sendable {
         while try s.step() {
             rows.append(StoredListen(id: s.int(0), startedAt: s.int(1), msPlayed: s.int(2), trackID: s.int(3),
                                      title: s.text(4), artist: s.text(5), album: s.text(6), uri: s.text(7),
-                                     durationMs: s.optionalInt(8)))
+                                     durationMs: s.optionalInt(8), skipped: s.optionalInt(9).map { $0 != 0 },
+                                     reasonEnd: s.optionalText(10)))
         }
         return rows
     }
 
-    func longestPlaysNow() throws -> [Int64: Int64] {
+    func longestPlaysNow() throws -> [Int64: PlayLengths] {
         let s = try db().prepare("""
-        SELECT l.track_id, MAX(l.ms_played) FROM listens l JOIN tracks t ON t.id = l.track_id
+        SELECT l.track_id, MAX(l.ms_played), MAX(CASE WHEN l.reason_end = 'trackdone' THEN l.ms_played END)
+        FROM listens l JOIN tracks t ON t.id = l.track_id
         WHERE t.kind = 0 GROUP BY l.track_id
         """)
         s.bind([])
-        var longest: [Int64: Int64] = [:]
-        while try s.step() { longest[s.int(0)] = s.int(1) }
+        var longest: [Int64: PlayLengths] = [:]
+        while try s.step() { longest[s.int(0)] = PlayLengths(longest: s.int(1), finished: s.optionalInt(2)) }
         return longest
     }
 

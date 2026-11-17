@@ -389,6 +389,17 @@ struct StoredListen: Equatable {
     var album: String
     var uri: String
     var durationMs: Int64?
+    /// From an extended export: whether the user skipped to the next song, and why the play
+    /// ended ("trackdone" when the song played to its end). Nil for live and account data.
+    var skipped: Bool? = nil
+    var reasonEnd: String? = nil
 
     var cursor: ListenCursor { ListenCursor(startedAt: startedAt, id: id) }
+}
+
+/// What the history knows of a track's length from its plays, for exports that have no
+/// lengths: the longest play, and the longest one that ran to the end of the song.
+struct PlayLengths: Equatable {
+    var longest: Int64
+    var finished: Int64?
 }

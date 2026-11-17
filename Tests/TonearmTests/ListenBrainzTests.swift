@@ -597,4 +597,67 @@ final class ListenBrainzSyncTests: XCTestCase {
         XCTAssertTrue(try readSaved().recent.isEmpty, "no song names are left in the file")
         XCTAssertTrue(s.hasToken)
     }
+
+    func testEarlierListensNeedHalfOfAPlayThatRanToTheEnd() async throws {
+        let iso = ISO8601DateFormatter()
+        let base = Date(timeIntervalSince1970: 1_577_836_800) // 2020-01-01
+        var n = 0
+        // One extended-history row: ms played, how it ended, and whether it was skipped.
+        func row(_ song: String, _ ms: Int, _ reason: String, skipped: Bool = false) -> [String: Any] {
+            n += 1
+            return ["ts": iso.string(from: base.addingTimeInterval(Double(n) * 1_000)), "ms_played": ms,
+                    "master_metadata_track_name": song, "master_metadata_album_artist_name": "Artist",
+                    "master_metadata_album_album_name": "Album",
+                    "spotify_track_uri": "spotify:track:" + String(repeating: String(song.prefix(1)), count: 22),
+                    "reason_end": reason, "skipped": skipped]
+        }
+        let extended = [
+            row("X once, skipped at 40 s", 40_000, "fwdbtn", skipped: true),
+            row("Y once, stopped at 100 s", 100_000, "endplay"),
+            row("Z full", 210_000, "trackdone"),
+            row("Z skipped at 2 min", 120_000, "fwdbtn", skipped: true),
+            row("Z skipped at 1 min", 60_000, "fwdbtn", skipped: true),
+            row("W a 35 s song", 35_000, "trackdone"),
+            row("V stopped after 4 min", 250_000, "logout"),
+        ].map { r -> [String: Any] in
+            // Z's three plays are one song.
+            var r = r
+            if let name = r["master_metadata_track_name"] as? String, name.hasPrefix("Z") {
+                r["master_metadata_track_name"] = "Z"
+            }
+            return r
+        }
+        // Account data says nothing about how a play ended.
+        let account: [[String: Any]] = [["endTime": "2021-01-01 10:00", "artistName": "Artist",
+                                         "trackName": "U once", "msPlayed": 100_000]]
+        let folder = dir.appendingPathComponent("export")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: extended)
+            .write(to: folder.appendingPathComponent("Streaming_History_Audio_2020_0.json"))
+        try JSONSerialization.data(withJSONObject: account)
+            .write(to: folder.appendingPathComponent("StreamingHistory_music_0.json"))
+        let store = HistoryStore(url: dir.appendingPathComponent("db/history.sqlite"))
+        XCTAssertEqual(try store.sync { try $0.importNow(urls: [folder]) }.added, 8)
+
+        let s = sync(source: store)
+        await s.sendHistory()
+        await s.waitUntilIdle()
+        let sent = submitted("import").flatMap(\.payload)
+        let names = sent.compactMap { ($0["track_metadata"] as? [String: Any])?["track_name"] as? String }
+        let played = sent.compactMap {
+            (($0["track_metadata"] as? [String: Any])?["additional_info"] as? [String: Any])?["duration_ms"]
+        }
+        XCTAssertEqual(names.sorted(), ["U once", "V stopped after 4 min", "W a 35 s song", "Z", "Z"])
+        XCTAssertTrue(played.isEmpty, "exports have no lengths, so none are sent")
+        XCTAssertEqual(s.saved.history?.skipped, 3)
+
+        // The case from review: one 40 s play of a 3:30 song.
+        let once = StoredListen(id: 1, startedAt: 0, msPlayed: 40_000, trackID: 1, title: "T", artist: "A",
+                                album: "", uri: "", durationMs: nil, skipped: true, reasonEnd: "fwdbtn")
+        XCTAssertFalse(ListenBrainzSync.historyCounts(once, lengths: PlayLengths(longest: 40_000, finished: nil)))
+        XCTAssertFalse(ListenBrainzSync.historyCounts(once, lengths: PlayLengths(longest: 210_000, finished: 210_000)))
+        var half = once
+        half.msPlayed = 105_000
+        XCTAssertTrue(ListenBrainzSync.historyCounts(half, lengths: PlayLengths(longest: 210_000, finished: 210_000)))
+    }
 }

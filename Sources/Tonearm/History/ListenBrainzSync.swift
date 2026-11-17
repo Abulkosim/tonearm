@@ -5,7 +5,7 @@ import Foundation
 protocol LBHistorySource: AnyObject {
     func summary() async throws -> HistorySummary
     func musicPage(after cursor: ListenCursor?, before: Int64, limit: Int) async throws -> [StoredListen]
-    func longestPlays() async throws -> [Int64: Int64]
+    func longestPlays() async throws -> [Int64: PlayLengths]
 }
 
 extension HistoryStore: LBHistorySource {}
@@ -106,7 +106,7 @@ final class ListenBrainzSync: ObservableObject {
     private var oneAtATime = false
     /// The same for history, up to this cursor.
     private var historyOneAtATimeUntil: ListenCursor?
-    private var longest: [Int64: Int64]?
+    private var longest: [Int64: PlayLengths]?
 
     static let maxRecent = 500
     static let maxBackoff: TimeInterval = 15 * 60
@@ -398,12 +398,9 @@ final class ListenBrainzSync: ObservableObject {
         }
     }
 
-    /// A stored listen as ListenBrainz should get it, or nil when it doesn't count. Exports
-    /// have no track lengths, so the longest play of the song stands in, and a play must
-    /// also be at least 30 s (Spotify's own count of a stream).
+    /// A stored listen as ListenBrainz should get it, or nil when it doesn't count.
     private func historyListen(_ r: StoredListen) -> LBListen? {
-        let length = r.durationMs ?? longest?[r.trackID]
-        guard r.msPlayed >= 30_000, ListenBrainz.counts(msPlayed: r.msPlayed, durationMs: length) else { return nil }
+        guard Self.historyCounts(r, lengths: longest?[r.trackID]) else { return nil }
         let uri = r.uri.hasPrefix("spotify:") ? r.uri : nil
         let l = LBListen(key: "db:\(r.id)", listenedAt: Self.floorDiv(r.startedAt, 1000), track: r.title,
                          artist: r.artist, release: r.album, durationMs: r.durationMs, spotifyURI: uri)
@@ -412,6 +409,22 @@ final class ListenBrainzSync: ObservableObject {
         let song = uri ?? "\(r.artist)\u{1F}\(r.title)"
         if saved.recent.contains(where: { $0.song == song && abs($0.start - r.startedAt) < 1000 }) { return nil }
         return l
+    }
+
+    /// Whether a stored play counts as a listen: half the song or 4 minutes, whichever is
+    /// less, and at least 30 s (Spotify's own count of a stream). Live plays know the song's
+    /// length; exports don't, so other plays of the song stand in for it.
+    /// - Extended history says how each play ended. Only a play that ran to the end
+    ///   ("trackdone") gives the length. With none, a play needs 4 minutes, so a song that
+    ///   was skipped every time is not sent.
+    /// - Account data says nothing about how a play ended, so the longest play stands in.
+    static func historyCounts(_ r: StoredListen, lengths: PlayLengths?) -> Bool {
+        guard r.msPlayed >= 30_000 else { return false }
+        if let d = r.durationMs { return ListenBrainz.counts(msPlayed: r.msPlayed, durationMs: d) }
+        if r.reasonEnd == nil && r.skipped == nil {
+            return ListenBrainz.counts(msPlayed: r.msPlayed, durationMs: lengths?.longest)
+        }
+        return ListenBrainz.counts(msPlayed: r.msPlayed, durationMs: lengths?.finished)
     }
 
     private func perform(_ job: Job, token: String) async {
