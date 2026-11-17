@@ -438,7 +438,8 @@ final class HistoryStoreReadTests: XCTestCase {
         let page2 = try store.sync { try $0.musicPageNow(after: page1.last?.cursor, before: .max, limit: 3) }
         XCTAssertEqual((page1 + page2).map(\.id), all.map(\.id))
         let longest = try store.sync { try $0.longestPlaysNow() }
-        XCTAssertEqual(Set(longest.values), [62_000, 63_000])
+        XCTAssertEqual(Set(longest.values.map(\.longest)), [62_000, 63_000])
+        XCTAssertEqual(longest.values.compactMap(\.finished), [], "live plays don't say how they ended")
     }
 }
 
