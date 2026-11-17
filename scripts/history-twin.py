@@ -472,8 +472,8 @@ def cmd_bench(a):
     fixture = os.path.join(HERE, "make-history-fixture.py")
     results = {}
     # The generator stops at its end date, and drops duplicates and skips, so ask for
-    # more rows than needed and check how many were stored.
-    for target, ask in ((100_000, 110_000), (200_000, 220_000)):
+    # a quarter more rows than needed and check how many were stored.
+    for target, ask in ((100_000, 125_000), (200_000, 250_000)):
         d = os.path.join(a.work, "bench-%d" % target)
         if not os.path.exists(d):
             subprocess.run([sys.executable, fixture, d, "--rows", str(ask), "--extended-only"], check=True)
