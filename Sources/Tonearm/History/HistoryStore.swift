@@ -59,6 +59,11 @@ final class HistoryStore: @unchecked Sendable {
         try await onQueueThrowing { try self.countNow() }
     }
 
+    /// Cover URLs Tonearm saw while playing, for Liner Notes. Imports have none.
+    func artwork() async throws -> ArtworkIndex {
+        try await onQueueThrowing { try self.artworkNow() }
+    }
+
     /// Writes every listen to `url`. Returns how many.
     @discardableResult
     func export(to url: URL, format: ExportFormat) async throws -> Int {
@@ -449,6 +454,19 @@ final class HistoryStore: @unchecked Sendable {
         return longest
     }
 
+    func artworkNow() throws -> ArtworkIndex {
+        let s = try db().prepare("""
+        SELECT title, artist, album, artwork_url FROM tracks
+        WHERE kind = 0 AND artwork_url IS NOT NULL AND artwork_url != '' ORDER BY id
+        """)
+        s.bind([])
+        var index = ArtworkIndex()
+        while try s.step() {
+            index.add(title: s.text(0), artist: s.text(1), album: s.text(2), url: s.text(3))
+        }
+        return index
+    }
+
     func yearsNow(timeZone: TimeZone) throws -> [Int] {
         let s = try db().prepare("SELECT started_at FROM listens ORDER BY started_at")
         s.bind([])
@@ -587,5 +605,19 @@ final class HistoryStore: @unchecked Sendable {
         guard try d.int("PRAGMA wal_checkpoint(TRUNCATE)") == 0 else {
             throw SQLiteError.step("could not clear history.sqlite-wal; the database is busy")
         }
+    }
+}
+
+/// Cover URLs by artist, song and album, keyed like `Stats.Item.id`: the artist's name, or
+/// "title<US>artist" and "album<US>artist". The newest track with a cover wins.
+struct ArtworkIndex: Equatable {
+    var artists: [String: String] = [:]
+    var songs: [String: String] = [:]
+    var albums: [String: String] = [:]
+
+    mutating func add(title: String, artist: String, album: String, url: String) {
+        if !artist.isEmpty { artists[artist] = url }
+        if !title.isEmpty { songs["\(title)\u{1F}\(artist)"] = url }
+        if !album.isEmpty { albums["\(album)\u{1F}\(artist)"] = url }
     }
 }
