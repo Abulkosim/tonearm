@@ -8,7 +8,7 @@ name: Release
 #   MACOS_CERT_P12 ...      Developer ID, notarized when notary secrets exist too
 #   SELF_SIGN_CERT_P12 ...  "Tonearm Self-Signed" certificate
 #   nothing                 ad-hoc
-# SPARKLE_ED_PRIVATE_KEY signs the update for the appcast. Without it a release has no appcast.
+# SPARKLE_ED_PRIVATE_KEY signs the update for the appcast. Without it a tag push fails.
 on:
   push:
     tags: ["v*"]
@@ -67,6 +67,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # A release without appcast.xml cuts every installed copy off from updates. Fail first.
+      - name: Require the Sparkle key
+        if: github.event_name == 'push'
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SPARKLE_ED_PRIVATE_KEY" ]; then
+            echo "::error::SPARKLE_ED_PRIVATE_KEY is not set; a release without appcast.xml cuts installed copies off from updates. See docs/releasing.md."
+            exit 1
+          fi
       - id: version
         env:
           EVENT: ${{ github.event_name }}
@@ -223,8 +233,8 @@ jobs:
           if [ -n "$SPARKLE_ED_PRIVATE_KEY" ]; then
             mode=signed
           elif [ "$PUBLISH" = true ]; then
-            mode=skipped
-            echo "::warning::SPARKLE_ED_PRIVATE_KEY is not set: this release has no appcast.xml, so installed copies will not see it as an update. See docs/releasing.md."
+            echo "::error::SPARKLE_ED_PRIVATE_KEY is not set: without appcast.xml installed copies never see this release. See docs/releasing.md."
+            exit 1
           else
             mode=dry-run
             SPARKLE_ED_PRIVATE_KEY="$("$OPENSSL" rand -base64 32)"
@@ -235,13 +245,11 @@ jobs:
             NOTES_FILE="changelogs/v$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist).md"
             export NOTES_FILE
           fi
-          if [ "$mode" != skipped ]; then
-            SPARKLE_ED_PRIVATE_KEY="$SPARKLE_ED_PRIVATE_KEY" SPARKLE_PUBLIC_KEY="$public_key" \
-              SIGN_UPDATE=build/sparkle/bin/sign_update \
-              scripts/appcast.sh "dist/Tonearm-$VERSION.zip" dist/appcast.xml
-            cat dist/appcast.xml
-            (cd dist && shasum -a 256 appcast.xml >> SHA256SUMS.txt)
-          fi
+          SPARKLE_ED_PRIVATE_KEY="$SPARKLE_ED_PRIVATE_KEY" SPARKLE_PUBLIC_KEY="$public_key" \
+            SIGN_UPDATE=build/sparkle/bin/sign_update \
+            scripts/appcast.sh "dist/Tonearm-$VERSION.zip" dist/appcast.xml
+          cat dist/appcast.xml
+          (cd dist && shasum -a 256 appcast.xml >> SHA256SUMS.txt)
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "Appcast: $mode" >> "$GITHUB_STEP_SUMMARY"
       - name: Remove signing keychain
@@ -292,9 +300,6 @@ jobs:
                 | sed -n 's:.*<string>\(.*\)</string>.*:\1:p')"
               scripts/verify-appcast.sh dist/appcast.xml "dist/Tonearm-$VERSION.zip" "$public_key"
               ;;
-            skipped)
-              echo "::warning::No appcast.xml: SPARKLE_ED_PRIVATE_KEY was not set. Installed copies will not update to $TAG."
-              ;;
             *)
               echo "::error::unexpected appcast mode '$APPCAST'"
               exit 1
@@ -342,10 +347,8 @@ jobs:
             echo "::error::release $TAG already exists; ship a new patch version instead"
             exit 1
           fi
-          files=("dist/Tonearm-$VERSION.dmg" "dist/Tonearm-$VERSION.zip" dist/Tonearm.dmg dist/Tonearm.zip dist/SHA256SUMS.txt)
-          if [ "$APPCAST" = signed ]; then
-            files+=(dist/appcast.xml)
-          fi
+          files=("dist/Tonearm-$VERSION.dmg" "dist/Tonearm-$VERSION.zip" dist/Tonearm.dmg dist/Tonearm.zip
+            dist/SHA256SUMS.txt dist/appcast.xml)
           # --latest moves releases/latest/download/{appcast.xml,Tonearm.dmg} to this release.
           gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag --latest \
             --title "Tonearm $TAG" --notes-file "$RUNNER_TEMP/notes.md" "${files[@]}"
