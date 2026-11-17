@@ -112,7 +112,7 @@ struct LinerNotesRoot: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
                 guard let w = note.object as? NSWindow, w === LinerNotesWindow.window else { return }
-                Task { await model.refresh() }
+                model.windowBecameKey()
             }
     }
 }
