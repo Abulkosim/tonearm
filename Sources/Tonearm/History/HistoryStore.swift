@@ -7,9 +7,9 @@ import Foundation
 ///
 ///     let store = HistoryStore.shared
 ///     let result = try await store.import(urls: picked) { p in ... }   // a folder, .zip or .json files
-///     let stats = await store.stats(for: .current(.year))              // or .year(2023), .allTime, ...
-///     let years = await store.years()                                  // years that have listens
-///     let n = await store.count()
+///     let stats = try await store.stats(for: .current(.year))          // or .year(2023), .allTime, ...
+///     let years = try await store.years()                              // years that have listens
+///     let n = try await store.count()
 ///     let written = try await store.export(to: url, format: .csv)
 ///     try await store.deleteAll()
 ///
@@ -30,7 +30,6 @@ final class HistoryStore: @unchecked Sendable {
     private let queue = DispatchQueue(label: "io.github.abulkosim.tonearm.history", qos: .utility)
     /// Opened on first use, on `queue`.
     private var database: SQLiteDB?
-    private var openError: Error?
     /// Live listens that started before this (UTC ms) are dropped: they were deleted.
     private var liveFloor: Int64 = .min
     private var catalogCache: StatsEngine.Catalog?
@@ -45,18 +44,19 @@ final class HistoryStore: @unchecked Sendable {
         try await onQueueThrowing { try self.importNow(urls: urls, progress: progress) }
     }
 
-    /// Stats for `period` in `timeZone`. Empty stats if the database can't be read.
-    func stats(for period: Period, timeZone: TimeZone = .current) async -> Stats {
-        await onQueue { (try? self.statsNow(for: period, timeZone: timeZone)) ?? Stats(period: period.description) }
+    /// Stats for `period` in `timeZone`. Throws if the database can't be read, so "no
+    /// history" and "history unreadable" look different.
+    func stats(for period: Period, timeZone: TimeZone = .current) async throws -> Stats {
+        try await onQueueThrowing { try self.statsNow(for: period, timeZone: timeZone) }
     }
 
     /// Years with at least one listen, oldest first, in `timeZone`.
-    func years(timeZone: TimeZone = .current) async -> [Int] {
-        await onQueue { (try? self.yearsNow(timeZone: timeZone)) ?? [] }
+    func years(timeZone: TimeZone = .current) async throws -> [Int] {
+        try await onQueueThrowing { try self.yearsNow(timeZone: timeZone) }
     }
 
-    func count() async -> Int {
-        await onQueue { (try? self.countNow()) ?? 0 }
+    func count() async throws -> Int {
+        try await onQueueThrowing { try self.countNow() }
     }
 
     /// Writes every listen to `url`. Returns how many.
@@ -71,9 +71,16 @@ final class HistoryStore: @unchecked Sendable {
 
     // MARK: Live recording
 
-    /// Stores or updates a listen Tonearm heard. Writes are queued in order.
+    /// Stores or updates a listen Tonearm heard. Writes are queued in order. A failed write
+    /// is logged; the next save of the same listen tries again.
     func save(_ listen: LiveListen) {
-        queue.async { try? self.saveNow(listen) }
+        queue.async {
+            do {
+                try self.saveNow(listen)
+            } catch {
+                NSLog("Tonearm: could not save a listen: %@", "\(error)")
+            }
+        }
     }
 
     /// Waits for queued writes. Call before the app quits.
@@ -82,12 +89,6 @@ final class HistoryStore: @unchecked Sendable {
     }
 
     // MARK: Queue
-
-    private func onQueue<T>(_ body: @escaping () -> T) async -> T {
-        await withCheckedContinuation { c in
-            queue.async { c.resume(returning: body()) }
-        }
-    }
 
     private func onQueueThrowing<T>(_ body: @escaping () throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { c in
@@ -102,19 +103,16 @@ final class HistoryStore: @unchecked Sendable {
 
     // MARK: Database
 
+    /// Opens the database on first use. A failed open is not remembered: the next call
+    /// tries again, so a passing problem (a full disk, say) does not stop recording until
+    /// relaunch.
     private func db() throws -> SQLiteDB {
         if let database { return database }
-        if let openError { throw openError }
-        do {
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let d = try SQLiteDB(path: url.path)
-            try Self.migrate(d)
-            database = d
-            return d
-        } catch {
-            openError = error
-            throw error
-        }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let d = try SQLiteDB(path: url.path)
+        try Self.migrate(d)
+        database = d
+        return d
     }
 
     static func migrate(_ d: SQLiteDB) throws {
