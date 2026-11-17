@@ -17,7 +17,11 @@ struct FadingLine: View {
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            text.lineLimit(1)
+            // Right-to-left text sits on the right whether it fits or not, so the lines of
+            // one song line up.
+            text
+                .lineLimit(1)
+                .frame(maxWidth: rightToLeft ? .infinity : nil, alignment: .trailing)
             text
                 .lineLimit(1)
                 .fixedSize()
