@@ -45,6 +45,12 @@ gh attestation verify Tonearm.dmg -R Abulkosim/tonearm
 
 No. It never logs in and doesn't use the Spotify Web API. It asks the Spotify app on your Mac what's playing, the same way a script in Script Editor would.
 
+## Does Tonearm send my listening history anywhere?
+
+No, unless you turn on ListenBrainz. The history is an SQLite file in `~/Library/Application Support/Tonearm` on your Mac. Tonearm has no server and no account, so there is nowhere else for it to go.
+
+If you turn on Send to ListenBrainz in Settings → History and paste your token, Tonearm sends each song you play to ListenBrainz, and nothing else. It is off by default. You can turn recording off, export the history or delete all of it in the same place. More in [history.md](history.md).
+
 ## Does `brew upgrade` update it?
 
 No, and it doesn't need to. The app updates itself, and the cask is marked `auto_updates`, so Homebrew leaves it alone.

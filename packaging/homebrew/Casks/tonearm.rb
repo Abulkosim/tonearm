@@ -23,6 +23,7 @@ cask "tonearm" do
 
   zap trash: [
     "~/Library/Application Support/io.github.abulkosim.tonearm",
+    "~/Library/Application Support/Tonearm",
     "~/Library/Caches/io.github.abulkosim.tonearm",
     "~/Library/HTTPStorages/io.github.abulkosim.tonearm",
     "~/Library/Preferences/io.github.abulkosim.tonearm.plist",
