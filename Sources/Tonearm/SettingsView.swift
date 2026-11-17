@@ -1,21 +1,32 @@
 import AppKit
 import SwiftUI
 
-/// Settings panel shown inside the popover. Takes no arguments and reads the
-/// `AppSettings.shared` and `LaunchAtLogin.shared` singletons, so it needs no
-/// environment objects. It has no outer padding or background: the host adds them.
+/// Settings panel shown inside the popover. Reads the `AppSettings.shared`,
+/// `LaunchAtLogin.shared` and `Updater.shared` singletons, so it needs no environment
+/// objects. It has no outer padding or background: the host adds them.
 struct SettingsView: View {
-    @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var settings: AppSettings
     @ObservedObject private var login = LaunchAtLogin.shared
     @ObservedObject private var updater = Updater.shared
     /// macOS blocks Tonearm's notifications while "Notify on song change" is on.
     private let notificationsDenied: Bool
     private let openNotificationSettings: () -> Void
+    /// Fixed values for snapshots. Nil in the app, which asks the real objects.
+    private let loginNeedsApprovalPreview: Bool?
+    private let canCheckForUpdatesPreview: Bool?
 
-    init(notificationsDenied: Bool = false, openNotificationSettings: @escaping () -> Void = {}) {
+    init(settings: AppSettings = .shared,
+         notificationsDenied: Bool = false, openNotificationSettings: @escaping () -> Void = {},
+         loginNeedsApproval: Bool? = nil, canCheckForUpdates: Bool? = nil) {
+        _settings = ObservedObject(wrappedValue: settings)
         self.notificationsDenied = notificationsDenied
         self.openNotificationSettings = openNotificationSettings
+        loginNeedsApprovalPreview = loginNeedsApproval
+        canCheckForUpdatesPreview = canCheckForUpdates
     }
+
+    private var loginNeedsApproval: Bool { loginNeedsApprovalPreview ?? login.needsApproval }
+    private var canCheckForUpdates: Bool { canCheckForUpdatesPreview ?? updater.canCheck }
 
     static let repoURL = URL(string: "https://github.com/Abulkosim/tonearm")!
 
@@ -55,17 +66,8 @@ struct SettingsView: View {
                 GreenSwitch(isOn: $settings.notifyOnTrackChange, label: "Notify on song change")
             }
             if notificationsDenied {
-                HStack(spacing: 8) {
-                    Text("Notifications are off for Tonearm")
-                        .foregroundColor(Theme.secondary)
-                    Spacer(minLength: 8)
-                    Button("Open Settings", action: openNotificationSettings)
-                        .buttonStyle(QuietButtonStyle(color: Theme.accent, hover: Theme.accentHover))
-                }
-                .font(.system(size: 12))
-                .frame(height: 24)
-                .padding(.bottom, 4)
-                .transition(.opacity)
+                note("Notifications are off", action: "Open Settings", openNotificationSettings)
+                    .transition(.opacity)
             }
 
             divider
@@ -74,17 +76,8 @@ struct SettingsView: View {
                 GreenSwitch(isOn: Binding(get: { login.isOn }, set: { login.setEnabled($0) }),
                             label: "Launch at login")
             }
-            if login.needsApproval {
-                HStack(spacing: 8) {
-                    Text("Needs approval in System Settings")
-                        .foregroundColor(Theme.secondary)
-                    Spacer(minLength: 8)
-                    Button("Open Login Items", action: login.openLoginItems)
-                        .buttonStyle(QuietButtonStyle(color: Theme.accent, hover: Theme.accentHover))
-                }
-                .font(.system(size: 12))
-                .frame(height: 24)
-                .padding(.bottom, 4)
+            if loginNeedsApproval {
+                note("Needs your approval", action: "Open Login Items", login.openLoginItems)
             }
             row("Global shortcuts") {
                 GreenSwitch(isOn: $settings.globalShortcuts, label: "Global shortcuts")
@@ -114,7 +107,7 @@ struct SettingsView: View {
                 GreenSwitch(isOn: $updater.automaticallyChecks, label: "Check for updates automatically")
             }
             actionRow("Check for Updates…") { updater.checkForUpdates() }
-                .disabled(!updater.canCheck)
+                .disabled(!canCheckForUpdates)
 
             divider
 
@@ -135,7 +128,7 @@ struct SettingsView: View {
         .font(.system(size: 13))
         .foregroundColor(.white)
         .animation(Theme.ease, value: settings.menuBarStyle)
-        .animation(Theme.ease, value: login.needsApproval)
+        .animation(Theme.ease, value: loginNeedsApproval)
         .animation(Theme.ease, value: settings.globalShortcuts)
         .animation(Theme.ease, value: notificationsDenied)
         .onAppear { login.refresh() }
@@ -163,6 +156,24 @@ struct SettingsView: View {
         }
         .buttonStyle(QuietButtonStyle(color: .white, hover: .white, hoverFill: true))
         .padding(.horizontal, -8)
+    }
+
+    /// A grey line under a setting with a green link on the right. The text wraps rather
+    /// than being cut off.
+    private func note(_ text: String, action title: String, _ action: @escaping () -> Void) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(text)
+                .foregroundColor(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(title, action: action)
+                .buttonStyle(QuietButtonStyle(color: Theme.accent, hover: Theme.accentHover))
+                .fixedSize()
+        }
+        .font(.system(size: 12))
+        .padding(.vertical, 4)
+        .frame(minHeight: 24)
+        .padding(.bottom, 4)
     }
 
     private var divider: some View {
@@ -310,9 +321,8 @@ struct LengthStepper: View {
                 .frame(width: 24, height: 24)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(QuietButtonStyle(color: enabled ? Theme.secondary : Theme.muted.opacity(0.6),
-                                      hover: enabled ? .white : Theme.muted.opacity(0.6),
-                                      hoverFill: enabled))
+        // The style dims it when disabled.
+        .buttonStyle(QuietButtonStyle(color: Theme.secondary, hover: .white, hoverFill: true))
         .disabled(!enabled)
         .accessibilityLabel(label)
     }
@@ -394,17 +404,19 @@ private struct QuietButtonBody: View {
     let hover: Color
     let hoverFill: Bool
     @State private var hovering = false
+    @Environment(\.isEnabled) private var isEnabled
     @Environment(\.isFocused) private var isFocused
 
     var body: some View {
         configuration.label
-            .foregroundColor(hovering ? hover : color)
+            .foregroundColor(hovering && isEnabled ? hover : color)
             .background(
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(Color.white.opacity(hoverFill && hovering ? 0.06 : 0))
+                    .fill(Color.white.opacity(hoverFill && hovering && isEnabled ? 0.06 : 0))
             )
             .focusOutline(RoundedRectangle(cornerRadius: 4, style: .continuous), isFocused: isFocused)
-            .opacity(configuration.isPressed ? 0.7 : 1)
+            // Dimmed while it can't be used, like "Check for Updates…" during a check.
+            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
             .onHover { hovering = $0 }
             .animation(.easeOut(duration: 0.12), value: hovering)
     }
