@@ -125,6 +125,7 @@ for i in "${!machos[@]}"; do
     fi
   fi
 done
+echo "signatures: ${#machos[@]} Mach-O files, signed alike, library validation ok"
 
 # Entitlements: exactly the file.
 codesign -d --entitlements - --xml "$app" > "$work/entitlements.plist" 2> /dev/null || true
