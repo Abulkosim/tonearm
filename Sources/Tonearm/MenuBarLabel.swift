@@ -57,13 +57,20 @@ struct MenuBarLabel: View {
         s.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
     }
 
-    /// Cuts `s` to at most `max` characters, ending in "…" when cut.
+    /// Cuts `s` to at most `max` characters, ending in "…" when cut, after a whole word when
+    /// one ends in the second half.
     /// Whitespace and separators left at the cut are dropped before the ellipsis. Pure, for tests.
     static func shorten(_ s: String, to max: Int) -> String {
         let s = s.trimmingCharacters(in: .whitespacesAndNewlines)
         guard s.count > max else { return s }
         guard max > 1 else { return max == 1 ? "…" : "" }
         var head = Substring(s.prefix(max - 1))
+        // End at a word's end when one is in the second half, not mid-word ("Dancefloo…").
+        let cutMidWord = !Array(s)[max - 1].isWhitespace
+        if cutMidWord, let space = head.lastIndex(where: \.isWhitespace),
+           head.distance(from: head.startIndex, to: space) >= max / 2 {
+            head = head[..<space]
+        }
         while let last = head.last, last.isWhitespace || "·-–—,:;".contains(last) {
             head.removeLast()
         }
