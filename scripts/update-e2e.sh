@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+# Updates an old Tonearm to the current one through Sparkle, with no human, from a feed on
+# 127.0.0.1. Proves that a release built by these scripts can be found, downloaded, checked
+# (EdDSA and code signature), installed and relaunched by the version before it.
+#
+# 1. Make a throwaway EdDSA key with Sparkle's generate_keys.
+# 2. Build OLD (0.0.1, build 1) and NEW (the version in Info.plist) with the test feed and key
+#    (TONEARM_TEST_UPDATE=1, see build-app.sh), signed with SIGN_IDENTITY.
+# 3. Package NEW with package.sh and appcast.sh, as a release does, and serve it.
+# 4. Install OLD in a temporary Applications folder and open it. Sparkle checks at once
+#    (there is no last check date), downloads, and Updater.swift installs right away because
+#    no Tonearm window is open.
+# 5. Assert the installed app is NEW, its signature verifies, and it stays up 10 s.
+#
+# CI only: it resets Tonearm's user defaults and kills Tonearm. TONEARM_E2E_LOCAL=1 overrides.
+# Usage: SIGN_IDENTITY="Tonearm Self-Signed" scripts/update-e2e.sh <work dir>
+# Environment: SIGN_IDENTITY (a codesign identity in the keychain, not ad-hoc),
+#   EXPECT_SIGNING (passed to check-app.sh, default self-signed), OPENSSL (OpenSSL 3).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+work="${1:?usage: update-e2e.sh <work dir>}"
+: "${SIGN_IDENTITY:?set SIGN_IDENTITY to a certificate identity}"
+[ "$SIGN_IDENTITY" != - ] || { echo "update-e2e: needs a certificate, not ad-hoc" >&2; exit 1; }
+if [ "${CI:-}" != true ] && [ "${TONEARM_E2E_LOCAL:-}" != 1 ]; then
+  echo "update-e2e: resets Tonearm's settings and kills Tonearm; set TONEARM_E2E_LOCAL=1 to run outside CI" >&2
+  exit 1
+fi
+OPENSSL="${OPENSSL:-$(brew --prefix openssl@3)/bin/openssl}"
+export OPENSSL
+EXPECT_SIGNING="${EXPECT_SIGNING:-self-signed}"
+bundle_id=io.github.abulkosim.tonearm
+plistbuddy=/usr/libexec/PlistBuddy
+say() { echo "update-e2e: $*"; }
+fail() { echo "::error::update-e2e: $*" >&2; exit 1; }
+# Runs a command with a time limit; macOS has no timeout(1).
+limit() { perl -e 'alarm shift; exec @ARGV or die "exec: $!"' "$@"; }
+
+rm -rf "$work"
+mkdir -p "$work/serve" "$work/Applications" "$work/old" "$work/logs" "$work/keys"
+work="$(cd "$work" && pwd)"
+chmod 700 "$work/keys"
+start="$(date '+%Y-%m-%d %H:%M:%S')"
+server_pid=""
+account="tonearm-e2e-$$"
+installed="$work/Applications/Tonearm.app"
+exe="$installed/Contents/MacOS/Tonearm"
+
+dump_logs() {
+  log show --start "$start" --style compact --info --debug \
+    --predicate 'subsystem BEGINSWITH "org.sparkle-project" OR process IN {"Tonearm", "Autoupdate", "Updater"} OR eventMessage CONTAINS[c] "sparkle"' \
+    > "$work/logs/system.log" 2>&1 || true
+  echo "--- http server"; cat "$work/logs/http.log" 2>/dev/null || true
+  echo "--- system log (last 120 lines)"; tail -n 120 "$work/logs/system.log" || true
+}
+cleanup() {
+  status=$?
+  [ "$status" = 0 ] || dump_logs
+  pkill -f "$exe" 2>/dev/null || true
+  [ -z "$server_pid" ] || kill "$server_pid" 2>/dev/null || true
+  security delete-generic-password -s https://sparkle-project.org -a "$account" > /dev/null 2>&1 || true
+  rm -rf "$work/keys"
+  exit "$status"
+}
+trap cleanup EXIT
+
+new_version="$("$plistbuddy" -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
+new_build="$(scripts/build-number.sh "$new_version")"
+old_version=0.0.1
+old_build=1
+
+# build-app.sh must refuse the overrides without TONEARM_TEST_UPDATE=1. It checks before building.
+if TONEARM_TEST_UPDATE='' TONEARM_TEST_FEED_URL=http://127.0.0.1:1/appcast.xml \
+     TONEARM_TEST_ED_KEY="$("$OPENSSL" rand -base64 32)" scripts/build-app.sh > "$work/logs/refuse.log" 2>&1; then
+  fail "build-app.sh accepted test overrides without TONEARM_TEST_UPDATE=1"
+fi
+grep -q 'refusing test overrides' "$work/logs/refuse.log" || { cat "$work/logs/refuse.log"; fail "build-app.sh failed for another reason"; }
+say "build-app.sh refuses test overrides without TONEARM_TEST_UPDATE=1"
+
+# 1. Throwaway EdDSA key from Sparkle's generate_keys (kept in the login keychain, deleted on exit).
+scripts/sparkle-tools.sh "$work/sparkle"
+gk="$work/sparkle/bin/generate_keys"
+limit 120 "$gk" --account "$account" > "$work/logs/generate_keys.log" 2>&1 \
+  || { cat "$work/logs/generate_keys.log"; fail "generate_keys could not make a key"; }
+public_key="$(limit 60 "$gk" --account "$account" -p)"
+limit 60 "$gk" --account "$account" -x "$work/keys/ed25519.key" > /dev/null
+seed="$(tr -d '\n' < "$work/keys/ed25519.key")"
+derived="$(SEED="$seed" scripts/ed25519-public-key.sh)"
+[ "$derived" = "$public_key" ] || fail "generate_keys printed $public_key, but the exported key derives $derived"
+say "EdDSA key from generate_keys: $public_key"
+
+# Serve the feed on a free port.
+port="$(python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
+python3 -I -u -m http.server "$port" --bind 127.0.0.1 --directory "$work/serve" > "$work/logs/http.log" 2>&1 &
+server_pid=$!
+feed="http://127.0.0.1:$port/appcast.xml"
+
+# 2. OLD and NEW. The second swift build is a no-op; only Info.plist and signatures change.
+build() { # version build
+  TONEARM_TEST_UPDATE=1 TONEARM_TEST_FEED_URL="$feed" TONEARM_TEST_ED_KEY="$public_key" \
+    VERSION="$1" BUILD="$2" scripts/build-app.sh > "$work/logs/build-$1.log" 2>&1 \
+    || { tail -n 60 "$work/logs/build-$1.log"; fail "build-app.sh failed for $1"; }
+  EXPECT_SIGNING="$EXPECT_SIGNING" EXPECT_VERSION="$1" EXPECT_BUILD="$2" EXPECT_FEED_URL="$feed" EXPECT_ED_KEY="$public_key" \
+    scripts/check-app.sh build/Tonearm.app
+}
+build "$old_version" "$old_build"
+ditto build/Tonearm.app "$work/old/Tonearm.app"
+build "$new_version" "$new_build"
+
+# 3. Package and sign the update the way release.yml does, then point the enclosure at the
+# local server. The EdDSA signature covers the zip, not the URL.
+VERSION="$new_version" scripts/package.sh > "$work/logs/package.log"
+zip="dist/Tonearm-$new_version.zip"
+VERSION="$new_version" BUILD="$new_build" TAG="v$new_version" REPO=Abulkosim/tonearm \
+  SPARKLE_ED_PRIVATE_KEY="$seed" SPARKLE_PUBLIC_KEY="$public_key" \
+  SIGN_UPDATE="$work/sparkle/bin/sign_update" \
+  scripts/appcast.sh "$zip" "$work/appcast.xml"
+sed "s#url=\"https://github.com/[^\"]*/$(basename "$zip")\"#url=\"http://127.0.0.1:$port/$(basename "$zip")\"#" \
+  "$work/appcast.xml" > "$work/serve/appcast.xml"
+grep -q "url=\"http://127.0.0.1:$port/" "$work/serve/appcast.xml" || fail "could not point the appcast at the local server"
+cp "$zip" "$work/serve/"
+scripts/verify-appcast.sh "$work/serve/appcast.xml" "$work/serve/$(basename "$zip")" "$public_key"
+for _ in $(seq 1 20); do
+  curl -fsS -o /dev/null "$feed" && break
+  sleep 0.5
+done
+curl -fsS "$feed" > /dev/null || fail "the feed server does not answer"
+cat "$work/serve/appcast.xml"
+
+# 4. Install OLD and open it like a user who has used it before: the welcome window was shown
+# (it would hold the install back while it is the key window), Sparkle's settings are the
+# Info.plist defaults, and there is no last check date, so Sparkle checks right away.
+defaults delete "$bundle_id" > /dev/null 2>&1 || true
+defaults write "$bundle_id" welcomeShown -bool true
+ditto "$work/old/Tonearm.app" "$installed"
+"$plistbuddy" -c 'Print :CFBundleVersion' "$installed/Contents/Info.plist"
+open -n "$installed"
+old_pid=""
+for _ in $(seq 1 30); do
+  old_pid="$(pgrep -f "$exe" | head -n 1 || true)"
+  [ -n "$old_pid" ] && break
+  sleep 1
+done
+[ -n "$old_pid" ] || fail "OLD did not start"
+say "OLD $old_version ($old_build) running as $old_pid, waiting for the update"
+
+# 5. Wait for the installed bundle to become NEW.
+deadline=$((SECONDS + 300))
+while :; do
+  current="$("$plistbuddy" -c 'Print :CFBundleVersion' "$installed/Contents/Info.plist" 2> /dev/null || true)"
+  [ "$current" = "$new_build" ] && break
+  [ "$SECONDS" -lt "$deadline" ] || fail "no update after 300 s; installed build is '$current'"
+  sleep 5
+done
+say "installed bundle is now build $current after $((SECONDS + 300 - deadline)) s"
+grep -q "GET /appcast.xml" "$work/logs/http.log" || fail "Sparkle never fetched the feed"
+grep -q "GET /$(basename "$zip")" "$work/logs/http.log" || fail "Sparkle never downloaded the update"
+
+# NEW must be relaunched (by Sparkle) and stay up.
+new_pid=""
+for _ in $(seq 1 60); do
+  new_pid="$(pgrep -f "$exe" | grep -vx "$old_pid" | head -n 1 || true)"
+  [ -n "$new_pid" ] && break
+  sleep 1
+done
+[ -n "$new_pid" ] || fail "NEW was not relaunched after the update"
+! kill -0 "$old_pid" 2> /dev/null || fail "OLD ($old_pid) is still running"
+sleep 10
+kill -0 "$new_pid" 2> /dev/null || fail "NEW ($new_pid) exited within 10 s"
+say "NEW running as $new_pid for 10 s"
+
+codesign --verify --deep --strict --verbose=2 "$installed"
+EXPECT_SIGNING="$EXPECT_SIGNING" EXPECT_VERSION="$new_version" EXPECT_BUILD="$new_build" EXPECT_FEED_URL="$feed" EXPECT_ED_KEY="$public_key" \
+  scripts/check-app.sh "$installed"
+dump_logs > /dev/null
+say "ok: $old_version ($old_build) updated itself to $new_version ($new_build) from $feed"
