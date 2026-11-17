@@ -1,0 +1,66 @@
+name: Update E2E
+
+# An old Tonearm updates itself to this commit through Sparkle, from a feed on 127.0.0.1,
+# with a throwaway certificate and EdDSA key. See scripts/update-e2e.sh.
+# release.yml calls it before publishing.
+on:
+  pull_request:
+    paths:
+      - scripts/**
+      - Resources/**
+      - Sources/Tonearm/Updater.swift
+      - Package.swift
+      - Package.resolved
+      - .github/workflows/update-e2e.yml
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+# github.workflow is the caller's name when release.yml calls this, so the group never
+# collides with the caller's own.
+concurrency:
+  group: update-e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  update:
+    name: Update end to end
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: swift --version && sw_vers
+      - name: Make and import a throwaway certificate
+        env:
+          CERT_IDENTITY: Tonearm Self-Signed
+          TRUST_CERT: "true"
+        run: |
+          P12_PASSWORD="$(openssl rand -hex 16)"
+          export P12_PASSWORD
+          scripts/make-self-signed-cert.sh "$RUNNER_TEMP/cert"
+          CERT_P12="$(base64 < "$RUNNER_TEMP/cert/tonearm-self-signed.p12" | tr -d '\n')" \
+            CERT_PASSWORD="$P12_PASSWORD" scripts/import-signing-cert.sh
+          rm -rf "$RUNNER_TEMP/cert"
+      - name: Update end to end
+        env:
+          SIGN_IDENTITY: Tonearm Self-Signed
+        run: scripts/update-e2e.sh "$RUNNER_TEMP/update-e2e"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: update-e2e-logs
+          path: ${{ runner.temp }}/update-e2e/logs/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Remove signing keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/tonearm-signing.keychain-db" || true
