@@ -127,6 +127,7 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(s.layout, .large)
         XCTAssertFalse(s.globalShortcuts)
         XCTAssertFalse(s.notifyOnTrackChange)
+        XCTAssertFalse(s.recordHistory, "nothing is recorded before the app can show it and turn it off")
     }
 
     func testPersists() {

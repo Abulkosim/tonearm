@@ -63,7 +63,9 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(notifyOnTrackChange, forKey: Key.notifyOnTrackChange) }
     }
 
-    /// Keeps a private history of what plays, for Liner Notes. On by default. See `PlayRecorder`.
+    /// Keeps a private history of what plays, for Liner Notes. See `PlayRecorder`. Off until
+    /// the app has a switch for it and says that it records; the change that adds those
+    /// turns it on by default. Unset stays unset, so that change reaches existing users.
     @Published var recordHistory: Bool {
         didSet { defaults.set(recordHistory, forKey: Key.recordHistory) }
     }
@@ -76,7 +78,7 @@ final class AppSettings: ObservableObject {
         layout = defaults.string(forKey: Key.layout).flatMap(PlayerLayout.init(rawValue:)) ?? .large
         globalShortcuts = defaults.bool(forKey: Key.globalShortcuts)
         notifyOnTrackChange = defaults.bool(forKey: Key.notifyOnTrackChange)
-        recordHistory = defaults.object(forKey: Key.recordHistory) as? Bool ?? true
+        recordHistory = defaults.object(forKey: Key.recordHistory) as? Bool ?? false
     }
 
     static func clampLength(_ n: Int) -> Int {
