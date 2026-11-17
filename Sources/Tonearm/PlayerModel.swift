@@ -47,6 +47,8 @@ final class PlayerModel: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
     private var hotKeys: HotKeys?
     private var notifier: TrackNotifier?
+    /// Records listens for Liner Notes. Live mode only.
+    private let recorder: PlayRecorder?
 
     private var pollTimer: Timer?
     private var pollInterval: TimeInterval?
@@ -102,6 +104,7 @@ final class PlayerModel: ObservableObject {
         self.bridge = bridge
         self.settings = settings
         self.live = live
+        recorder = live ? PlayRecorder.live(settings: settings) : nil
         guard live else { return }
 
         bridge.permissionPromptChanged = { [weak self] asking in self?.permissionPromptChanged(asking) }
@@ -418,6 +421,11 @@ final class PlayerModel: ObservableObject {
         }
         if next != playback { playback = next }
         if newClock.date != positionDate { positionDate = newClock.date }
+        recordPlayback()
+    }
+
+    private func recordPlayback() {
+        recorder?.observe(track: track, playing: isPlaying, position: position(at: Date()))
     }
 
     private func updatePolling() {
@@ -506,6 +514,7 @@ final class PlayerModel: ObservableObject {
         loadedArtworkURL = nil
         if artwork != nil { artwork = nil }
         if artworkColors != nil { artworkColors = nil }
+        recordPlayback()
         updatePolling()
     }
 
@@ -631,6 +640,7 @@ final class PlayerModel: ObservableObject {
         commandGeneration += 1
         queuedSeek = s
         sendQueuedSeek()
+        recordPlayback()
     }
 
     /// Jumps forward (positive) or back (negative) from the current position.

@@ -30,6 +30,7 @@ final class AppSettings: ObservableObject {
         static let layout = "layout"
         static let globalShortcuts = "globalShortcuts"
         static let notifyOnTrackChange = "notifyOnTrackChange"
+        static let recordHistory = "recordHistory"
     }
 
     private let defaults: UserDefaults
@@ -62,6 +63,11 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(notifyOnTrackChange, forKey: Key.notifyOnTrackChange) }
     }
 
+    /// Keeps a private history of what plays, for Liner Notes. On by default. See `PlayRecorder`.
+    @Published var recordHistory: Bool {
+        didSet { defaults.set(recordHistory, forKey: Key.recordHistory) }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         menuBarStyle = defaults.string(forKey: Key.menuBarStyle).flatMap(MenuBarStyle.init(rawValue:)) ?? .songTitle
@@ -70,6 +76,7 @@ final class AppSettings: ObservableObject {
         layout = defaults.string(forKey: Key.layout).flatMap(PlayerLayout.init(rawValue:)) ?? .large
         globalShortcuts = defaults.bool(forKey: Key.globalShortcuts)
         notifyOnTrackChange = defaults.bool(forKey: Key.notifyOnTrackChange)
+        recordHistory = defaults.object(forKey: Key.recordHistory) as? Bool ?? true
     }
 
     static func clampLength(_ n: Int) -> Int {
