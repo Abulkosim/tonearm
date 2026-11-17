@@ -66,7 +66,14 @@ if [ "$NOTARIZE" = true ]; then
   xcrun stapler staple "$DMG"
   spctl -a -t open --context context:primary-signature -vv "$DMG"
 fi
-hdiutil verify "$DMG"
+# verify hits the same "Resource temporarily unavailable" flake; retry it too.
+for attempt in 1 2 3; do
+  if hdiutil verify "$DMG"; then
+    break
+  fi
+  [ "$attempt" -lt 3 ] || exit 1
+  sleep 5
+done
 
 cp "$ZIP" "$OUT/Tonearm.zip"
 cp "$DMG" "$OUT/Tonearm.dmg"
