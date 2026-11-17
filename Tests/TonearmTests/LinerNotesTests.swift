@@ -1,0 +1,187 @@
+import AppKit
+import XCTest
+@testable import Tonearm
+
+final class LinerNotesWindowTests: XCTestCase {
+    func testShortcutOpensLinerNotes() {
+        XCTAssertEqual(KeyCommand.from(keyCode: 37, characters: "l", modifiers: [.command]), .linerNotes)
+        // "д" sits on the L key in the Russian layout.
+        XCTAssertEqual(KeyCommand.from(keyCode: 37, characters: "д", modifiers: [.command]), .linerNotes)
+        XCTAssertNil(KeyCommand.from(keyCode: 37, characters: "l", modifiers: []))
+        XCTAssertTrue(KeyCommand.help.contains { $0.keys == "⌘L" })
+    }
+
+    func testPlayerTrackingSkipsTheLinerNotesWindow() {
+        // SwiftUI's windows all come from com.apple.SwiftUI; the Liner Notes one is named
+        // after its scene.
+        XCTAssertFalse(PlayerModel.isPopoverWindow(className: "SwiftUI.AppKitWindow", classBundleID: "com.apple.SwiftUI",
+                                                   identifier: "liner-notes-AppWindow-1"))
+        XCTAssertTrue(PlayerModel.isPopoverWindow(className: "SomePanel", classBundleID: "com.apple.SwiftUI",
+                                                  identifier: nil))
+        XCTAssertTrue(LinerNotesWindow.isLinerNotes(identifier: "liner-notes"))
+        XCTAssertFalse(LinerNotesWindow.isLinerNotes(identifier: "tonearm.welcome"))
+    }
+}
+
+final class WordClampTests: XCTestCase {
+    func testCandidatesEndAtWholeWords() {
+        XCTAssertEqual(WordClampedText.candidates("Hello big world"), ["Hello big world", "Hello big…", "Hello…"])
+    }
+
+    func testTrailingPunctuationIsDropped() {
+        XCTAssertEqual(WordClampedText.candidates("Piano Concerto No. 2, Op. 18")[1], "Piano Concerto No. 2, Op…")
+        XCTAssertEqual(WordClampedText.candidates("Florence + The Machine").last, "Florence…")
+        XCTAssertEqual(WordClampedText.candidates("Песня о звезде (Remastered 2024)")[1], "Песня о звезде (Remastered…")
+    }
+
+    func testOneWordHasNoShorterOption() {
+        XCTAssertEqual(WordClampedText.candidates("Supercalifragilistic"), ["Supercalifragilistic"])
+        XCTAssertEqual(WordClampedText.candidates(""), [""])
+    }
+
+    func testLongestWord() {
+        XCTAssertEqual(WordClampedText.longestWord("Florence + The Machine"), "Florence")
+        XCTAssertEqual(WordClampedText.longestWord("Supercalifragilistic and more"), "Supercalifragilistic")
+        XCTAssertEqual(WordClampedText.longestWord("!!!"), "")
+    }
+
+    func testJapaneseBreaksBetweenWords() {
+        let options = WordClampedText.candidates("夜に駆ける、そしてまた夜明けまで歩き続ける")
+        XCTAssertGreaterThan(options.count, 2)
+        for option in options.dropFirst() {
+            XCTAssertTrue(option.hasSuffix("…"))
+            XCTAssertFalse(option.hasSuffix("、…"))
+        }
+    }
+}
+
+final class LinerArtTests: XCTestCase {
+    func testTilesAreTheSameForTheSameName() {
+        let a = NameTile.colors(for: "Кино"), b = NameTile.colors(for: "Кино")
+        XCTAssertEqual(a.face, b.face)
+        XCTAssertNotEqual(NameTile.colors(for: "Кино").face, NameTile.colors(for: "Сплин").face)
+    }
+
+    func testInitials() {
+        XCTAssertEqual(NameTile.initials("Sigur Rós"), "SR")
+        XCTAssertEqual(NameTile.initials("The 1975"), "T1")
+        XCTAssertEqual(NameTile.initials("坂本龍一"), "坂")
+        XCTAssertEqual(NameTile.initials("!!!"), "!")
+        XCTAssertEqual(NameTile.initials("🌊 Wave Machine"), "WM")
+        XCTAssertEqual(NameTile.initials("ólafur arnalds"), "ÓA")
+    }
+
+    func testWhiteInitialsReadOnEveryTile() {
+        let white = PaletteColor(r: 1, g: 1, b: 1)
+        for i in 0..<2000 {
+            let face = NameTile.colors(for: "artist \(i)").face
+            XCTAssertGreaterThanOrEqual(SleeveColors.contrast(white, face), 3, "artist \(i)")
+        }
+    }
+
+    /// Every sleeve, from any cover color, keeps both text roles at 4.5:1 or more.
+    func testSleeveTextAlwaysReads() {
+        var lowest = Double.infinity
+        for h in stride(from: 0.0, to: 1.0, by: 1.0 / 72) {
+            for s in stride(from: 0.0, through: 1.0, by: 0.1) {
+                for v in stride(from: 0.0, through: 1.0, by: 0.1) {
+                    let base = PaletteColor(hue: h, saturation: s, brightness: v)
+                    let sleeve = SleeveColors(palette: ArtworkPalette.tones(for: base))
+                    lowest = min(lowest, sleeve.minimumTextContrast)
+                }
+            }
+        }
+        for i in 0..<500 { lowest = min(lowest, SleeveColors(name: "album \(i)").minimumTextContrast) }
+        XCTAssertGreaterThanOrEqual(lowest, 4.5)
+    }
+
+    func testSleeveFromPaleAndBlackCovers() {
+        for cover in [Snapshot.SampleCover.pale, .black, .warm, .teal] {
+            let sleeve = SleeveColors(image: Snapshot.sampleArtwork(cover))
+            XCTAssertNotNil(sleeve)
+            XCTAssertGreaterThanOrEqual(sleeve?.minimumTextContrast ?? 0, 4.5)
+        }
+    }
+}
+
+final class LinerFormatTests: XCTestCase {
+    private let utc = TimeZone(identifier: "UTC")!
+
+    func testPeriodSteps() {
+        XCTAssertEqual(Period.month(year: 2024, month: 12).next, .month(year: 2025, month: 1))
+        XCTAssertEqual(Period.year(2024).next, .year(2025))
+        XCTAssertEqual(Period.week(LocalDay(year: 2024, month: 12, day: 31)).next,
+                       .week(LocalDay(year: 2025, month: 1, day: 6)))
+        XCTAssertNil(Period.allTime.next)
+        XCTAssertEqual(Period.of(.month, containing: LocalDay(year: 2023, month: 7, day: 9)), .month(year: 2023, month: 7))
+        XCTAssertEqual(Period.month(year: 2023, month: 7).kind, .month)
+    }
+
+    func testMinutes() {
+        XCTAssertEqual(LinerFormat.minutes(29_999), 0)
+        XCTAssertEqual(LinerFormat.minutes(30_000), 1)
+        XCTAssertEqual(LinerFormat.minutes(60_000 * 41_203), 41_203)
+        XCTAssertEqual(LinerFormat.plays(1), "1 play")
+        XCTAssertEqual(LinerFormat.hours(3_600_000 * 2 + 1), "2 hours")
+        XCTAssertEqual(LinerFormat.hours(60_000 * 41), "41 minutes")
+    }
+
+    func testAverageCountsOnlyDaysSoFar() {
+        let start = LocalDay(year: 2025, month: 11, day: 17)
+        let week = (0..<7).map { Stats.DayTotal(day: start.adding(days: $0), ms: 60_000) }
+        XCTAssertEqual(ListeningChart.daysSoFar(week, today: LocalDay(year: 2025, month: 11, day: 19)), 3)
+        XCTAssertEqual(ListeningChart.daysSoFar(week, today: LocalDay(year: 2026, month: 1, day: 1)), 7)
+    }
+
+    func testTitles() {
+        XCTAssertEqual(LinerFormat.title(.year(2024), timeZone: utc), "2024")
+        XCTAssertEqual(LinerFormat.title(.allTime, timeZone: utc), "All time")
+        XCTAssertTrue(LinerFormat.title(.month(year: 2025, month: 11), timeZone: utc).contains("2025"))
+        XCTAssertTrue(LinerFormat.title(.week(LocalDay(year: 2025, month: 11, day: 19)), timeZone: utc).contains("17"))
+    }
+}
+
+@MainActor
+final class LinerNotesModelTests: XCTestCase {
+    private let utc = TimeZone(identifier: "UTC")!
+
+    private func model(_ period: Period) -> LinerNotesModel {
+        LinerNotesModel(snapshot: .ready, period: period, stats: nil, years: Array(2019...2025), total: 10,
+                        now: LocalDay(year: 2025, month: 11, day: 20).date(in: utc), timeZone: utc)
+    }
+
+    func testArrowsStopAtTodayAndTheFirstYear() {
+        XCTAssertFalse(model(.year(2025)).canGoForward)
+        XCTAssertTrue(model(.year(2024)).canGoForward)
+        XCTAssertFalse(model(.year(2019)).canGoBack)
+        XCTAssertTrue(model(.year(2020)).canGoBack)
+        XCTAssertFalse(model(.month(year: 2025, month: 11)).canGoForward)
+        XCTAssertFalse(model(.week(LocalDay(year: 2025, month: 11, day: 20))).canGoForward)
+        XCTAssertFalse(model(.allTime).canGoBack)
+        XCTAssertFalse(model(.allTime).canGoForward)
+    }
+
+    func testSwitchingKindKeepsThePlace() {
+        let m = model(.year(2023))
+        m.select(kind: .month)
+        XCTAssertEqual(m.period, .month(year: 2023, month: 12))
+        m.select(kind: .week)
+        XCTAssertEqual(m.period, .week(LocalDay(year: 2023, month: 12, day: 31)))
+        m.select(kind: .allTime)
+        m.select(kind: .year)
+        XCTAssertEqual(m.period, .year(2025))
+    }
+
+    func testYearMenuKeepsTheKind() {
+        let m = model(.month(year: 2024, month: 3))
+        m.select(year: 2021)
+        XCTAssertEqual(m.period, .month(year: 2021, month: 3))
+        let all = model(.allTime)
+        all.select(year: 2020)
+        XCTAssertEqual(all.period, .year(2020))
+        // A month that has not happened yet this year becomes this month.
+        let late = model(.month(year: 2024, month: 12))
+        late.select(year: 2025)
+        XCTAssertEqual(late.period, .month(year: 2025, month: 11))
+    }
+}
