@@ -80,11 +80,11 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertEqual(rows?.first?["kind"] as? String, "music")
         XCTAssertEqual(rows?.first?["reason_start"] as? String, "clickrow")
         XCTAssertEqual(rows?.last?["kind"] as? String, "podcast")
-        s.flush()
-        var files = [csv, json, s.url]
+        // The store is still open, so the WAL still holds what the import wrote.
         let wal = URL(fileURLWithPath: s.url.path + "-wal")
-        if FileManager.default.fileExists(atPath: wal.path) { files.append(wal) }
-        for blob in try files.map({ try Data(contentsOf: $0) }) {
+        let walBlob = try Data(contentsOf: wal)
+        XCTAssertNotNil(walBlob.range(of: Data("Группа крови".utf8)), "else the WAL check proves nothing")
+        for blob in try [csv, json, s.url].map({ try Data(contentsOf: $0) }) + [walBlob] {
             XCTAssertNil(blob.range(of: Data("192.0.2.".utf8)))
             XCTAssertNil(blob.range(of: Data("OS X 14".utf8)))
         }
