@@ -26,10 +26,13 @@ struct StatusMessage<Actions: View>: View {
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 4)
-            VStack(spacing: 8) {
-                actions
+            // No gap under the text on screens without a button.
+            if Actions.self != EmptyView.self {
+                VStack(spacing: 8) {
+                    actions
+                }
+                .padding(.top, 20)
             }
-            .padding(.top, 20)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 16)
