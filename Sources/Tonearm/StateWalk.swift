@@ -269,8 +269,9 @@ enum StateWalk {
             before: since, first: ListenBrainzSync.ms(march2019),
             cursor: ListenCursor(startedAt: ListenBrainzSync.ms(HistorySettingsModel.date(2021, 6, 2)), id: 1),
             sent: 14_000)
-        let connected = ListenBrainzSync.Saved(userName: "rob_listens", sent: 112, since: since, history: sending)
-        var waiting = ListenBrainzSync.Saved(userName: "rob_listens", sent: 112, since: since)
+        let connected = ListenBrainzSync.Saved(userName: "rob_listens", sent: 112, live: [.init(from: since)],
+                                               history: sending)
+        var waiting = ListenBrainzSync.Saved(userName: "rob_listens", sent: 112, live: [.init(from: since)])
         waiting.pending = (0..<3).map {
             LBListen(key: "s\($0)", listenedAt: 1_700_000_000 + Int64($0) * 300, track: "Song", artist: "Artist")
         }

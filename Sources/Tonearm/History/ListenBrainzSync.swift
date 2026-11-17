@@ -17,9 +17,10 @@ extension HistoryStore: LBHistorySource {}
 /// - The queue is a file next to the history. A listen leaves it only after ListenBrainz
 ///   answered 200, so going offline or quitting loses nothing. Sending is retried with
 ///   backoff, and waits as long as the rate limit headers ask.
-/// - "Send history" sends the listens stored before ListenBrainz was turned on, with
-///   listen_type "import", 1000 at a time. Where it got to is saved after each batch, so it
-///   goes on from there after a quit or an error.
+/// - "Send history" sends the stored listens that were not queued live: from before the
+///   token was added, or from while sending was off. It uses listen_type "import", 1000 at
+///   a time. Where it got to is saved after each batch, so it goes on from there after a
+///   quit or an error.
 @MainActor
 final class ListenBrainzSync: ObservableObject {
     static let shared = ListenBrainzSync(
@@ -43,9 +44,19 @@ final class ListenBrainzSync: ObservableObject {
         var recent: [Recent] = []
         /// Live listens sent since the token was added.
         var sent = 0
-        /// When the token was added, UTC ms. "Send history" sends what started before it.
-        var since: Int64?
+        /// When live plays were being queued, UTC ms. "Send history" sends the stored
+        /// listens that started outside these: before the token was added, or while sending
+        /// was off.
+        var live: [Span] = []
         var history: HistorySend?
+    }
+
+    struct Span: Codable, Equatable {
+        var from: Int64
+        /// Nil while it is still going.
+        var to: Int64?
+
+        func contains(_ t: Int64) -> Bool { t >= from && t < (to ?? .max) }
     }
 
     struct Recent: Codable, Equatable {
@@ -57,7 +68,7 @@ final class ListenBrainzSync: ObservableObject {
     }
 
     struct HistorySend: Codable, Equatable {
-        /// Listens that started before this, UTC ms.
+        /// Listens that started before this, UTC ms: when the send began.
         var before: Int64
         /// The first listen's start, for progress.
         var first: Int64?
@@ -107,6 +118,13 @@ final class ListenBrainzSync: ObservableObject {
     /// The same for history, up to this cursor.
     private var historyOneAtATimeUntil: ListenCursor?
     private var longest: [Int64: PlayLengths]?
+    /// Live listens that started before this were deleted with the history. UTC ms.
+    private var liveFloor: Int64 = .min
+    /// Goes up with Remove token and Delete all history, so a request or a read already
+    /// under way does not write back what they cleared.
+    private var generation = 0
+    /// The live listen heard last: when it started, and whether it was queued.
+    private var lastHeard: (start: Int64, queued: Bool)?
 
     static let maxRecent = 500
     static let maxBackoff: TimeInterval = 15 * 60
@@ -143,9 +161,15 @@ final class ListenBrainzSync: ObservableObject {
         return sync
     }
 
-    /// At launch: reads the token and goes on with anything left from last time.
+    /// At launch: reads the token and goes on with anything left from last time. While
+    /// sending is off it leaves the Keychain alone.
     func start() {
+        guard isOn() else {
+            closeSpan()
+            return
+        }
         connection = hasToken ? .connected : .noToken
+        if connection == .connected { openSpan() }
         kick()
     }
 
@@ -160,13 +184,37 @@ final class ListenBrainzSync: ObservableObject {
         return min(1, max(0, Double(at - first) / Double(h.before - first)))
     }
 
-    private func switched(_ on: Bool) {
+    func switched(_ on: Bool) {
         if on {
+            if connection == .noToken, hasToken { connection = .connected }
+            if hasToken { openSpan() }
             kick()
         } else {
+            closeSpan()
             stopWorker()
             nowPlaying = nil
         }
+    }
+
+    /// Live plays are queued from now on.
+    private func openSpan() {
+        if let last = saved.live.last, last.to == nil { return }
+        saved.live.append(Span(from: Self.ms(now())))
+        persist()
+    }
+
+    /// Live plays are no longer queued. A song that is playing but was not queued yet is
+    /// left outside, for "Send history".
+    private func closeSpan() {
+        guard var last = saved.live.last, last.to == nil else { return }
+        var end = Self.ms(now())
+        if let l = lastHeard, !l.queued, l.start >= last.from, l.start < end { end = l.start }
+        saved.live.removeLast()
+        if end > last.from {
+            last.to = end
+            saved.live.append(last)
+        }
+        persist()
     }
 
     // MARK: Token
@@ -181,12 +229,12 @@ final class ListenBrainzSync: ObservableObject {
             let user = try await client.validate(token: token)
             try tokens.write(token)
             saved.userName = user.isEmpty ? nil : user
-            if saved.since == nil { saved.since = Self.ms(now()) }
             connection = .connected
             failures = 0
             notBefore = .distantPast
             retryAt = nil
             persist()
+            if isOn() { openSpan() }
             kick()
         } catch LBError.invalidToken {
             connection = hasToken ? .tokenRejected : .noToken
@@ -203,34 +251,44 @@ final class ListenBrainzSync: ObservableObject {
     /// Forgets the token and everything queued for ListenBrainz.
     func disconnect() {
         stopWorker()
+        generation += 1
         tokens.delete()
         saved = Saved()
         nowPlaying = nil
         lastNowPlayingKey = nil
+        lastHeard = nil
         problem = nil
         retryAt = nil
         connection = .noToken
         if let file { try? FileManager.default.removeItem(at: file) }
     }
 
-    /// "Delete all history" also deletes the queue: it holds song names. The token stays.
+    /// "Delete all history" also deletes the queue: it holds song names. The token stays,
+    /// and so do the times sending was on, which hold none. The song playing now was deleted
+    /// from the history too, so it is not queued again.
     func deleteQueued() {
         stopWorker()
-        saved = Saved(userName: saved.userName, since: saved.since)
+        generation += 1
+        liveFloor = Self.ms(now())
+        saved = Saved(userName: saved.userName, live: saved.live)
         nowPlaying = nil
+        lastHeard = nil
         oneAtATime = false
         historyOneAtATimeUntil = nil
         longest = nil
-        persist()
+        // Empty the file if there is one; never make one for someone who never connected.
+        if let file, FileManager.default.fileExists(atPath: file.path) { persist() }
         kick()
     }
 
     // MARK: Live
 
     /// A look at what `PlayRecorder` stores: called with the open listen as it grows and
-    /// once more when it closes. Same `dedupKey`, same play.
+    /// once more when it closes. Same `dedupKey`, same play. Queued while the token is
+    /// refused too: it goes out once there is a new one.
     func heard(_ listen: LiveListen) {
-        guard isOn(), hasToken, connection != .tokenRejected, listen.kind == .music else { return }
+        let start = Self.ms(listen.startedAt)
+        guard isOn(), listen.kind == .music, start >= liveFloor, hasToken else { return }
         let key = "live:\(listen.dedupKey)"
         let uri = listen.trackID.hasPrefix("spotify:") ? listen.trackID : nil
         let lb = LBListen(key: key, listenedAt: Int64(listen.startedAt.timeIntervalSince1970.rounded(.down)),
@@ -245,7 +303,7 @@ final class ListenBrainzSync: ObservableObject {
         if ListenBrainz.counts(msPlayed: listen.msPlayed, durationMs: listen.durationMs),
            !saved.recent.contains(where: { $0.key == key }), ListenBrainz.isSendable(lb, type: .single) {
             var recent = Recent(key: key, song: uri ?? "\(listen.artist)\u{1F}\(listen.title)",
-                                start: Self.ms(listen.startedAt), durationMs: listen.durationMs)
+                                start: start, durationMs: listen.durationMs)
             if let first = samePlay(recent) {
                 // Remembered as part of the first one, so the play after it is still new.
                 recent.start = first.start
@@ -255,8 +313,15 @@ final class ListenBrainzSync: ObservableObject {
             }
             saved.recent.append(recent)
             if saved.recent.count > Self.maxRecent { saved.recent.removeFirst(saved.recent.count - Self.maxRecent) }
+            // A song that began just before sending was turned on is queued; "Send history"
+            // must not send it again.
+            if var span = saved.live.last, span.to == nil, start < span.from {
+                span.from = start
+                saved.live[saved.live.count - 1] = span
+            }
             persist()
         }
+        lastHeard = (start, saved.recent.contains { $0.key == key })
         kick()
     }
 
@@ -273,11 +338,13 @@ final class ListenBrainzSync: ObservableObject {
 
     // MARK: History
 
-    /// Starts (or starts again) sending the listens stored before the token was added.
+    /// Starts (or starts again) sending the stored listens that were not queued live.
     func sendHistory() async {
         guard hasToken, let source else { return }
-        let before = saved.since ?? Self.ms(now())
+        let before = Self.ms(now())
+        let gen = generation
         let first = try? await source.summary().first.map(Self.ms)
+        guard gen == generation else { return }
         saved.history = HistorySend(before: before, first: first)
         historyOneAtATimeUntil = nil
         longest = nil
@@ -356,8 +423,16 @@ final class ListenBrainzSync: ObservableObject {
 
     private func nextHistoryBatch() async -> Job? {
         guard var h = saved.history, h.finished == nil, let source else { return nil }
+        // Reads wait on the store. If the history was deleted, the token removed, sending
+        // switched off or the send started again meanwhile, what was read is out of date.
+        let started = h, gen = generation
+        func current() -> Bool { !Task.isCancelled && gen == generation && saved.history == started }
         do {
-            if longest == nil { longest = try await source.longestPlays() }
+            if longest == nil {
+                let lengths = try await source.longestPlays()
+                guard current() else { return nil }
+                longest = lengths
+            }
             var cursor = h.cursor
             var out: [LBListen] = []
             var skipped = 0
@@ -371,9 +446,11 @@ final class ListenBrainzSync: ObservableObject {
             }
             reading: while out.count < limit {
                 let rows = try await source.musicPage(after: cursor, before: h.before, limit: 1000)
+                guard current() else { return nil }
                 if rows.isEmpty { break }
                 for r in rows {
                     cursor = r.cursor
+                    if queuedLive(r) { continue }
                     if let l = historyListen(r) {
                         out.append(l)
                     } else {
@@ -393,9 +470,16 @@ final class ListenBrainzSync: ObservableObject {
             }
             return .history(out, through: through, skipped: skipped)
         } catch {
-            problem = "Can't read the history: \(error)"
+            if current() { problem = "Can't read the history: \(error)" }
             return nil
         }
+    }
+
+    /// Whether this stored listen went through the live queue, or was meant to.
+    private func queuedLive(_ r: StoredListen) -> Bool {
+        if saved.live.contains(where: { $0.contains(r.startedAt) }) { return true }
+        let song = r.uri.hasPrefix("spotify:") ? r.uri : "\(r.artist)\u{1F}\(r.title)"
+        return saved.recent.contains { $0.song == song && abs($0.start - r.startedAt) < 1000 }
     }
 
     /// A stored listen as ListenBrainz should get it, or nil when it doesn't count.
@@ -404,11 +488,7 @@ final class ListenBrainzSync: ObservableObject {
         let uri = r.uri.hasPrefix("spotify:") ? r.uri : nil
         let l = LBListen(key: "db:\(r.id)", listenedAt: Self.floorDiv(r.startedAt, 1000), track: r.title,
                          artist: r.artist, release: r.album, durationMs: r.durationMs, spotifyURI: uri)
-        guard ListenBrainz.isSendable(l, type: .import) else { return nil }
-        // Sent live already.
-        let song = uri ?? "\(r.artist)\u{1F}\(r.title)"
-        if saved.recent.contains(where: { $0.song == song && abs($0.start - r.startedAt) < 1000 }) { return nil }
-        return l
+        return ListenBrainz.isSendable(l, type: .import) ? l : nil
     }
 
     /// Whether a stored play counts as a listen: half the song or 4 minutes, whichever is
@@ -428,6 +508,7 @@ final class ListenBrainzSync: ObservableObject {
     }
 
     private func perform(_ job: Job, token: String) async {
+        let gen = generation
         let type: ListenBrainz.ListenType
         let listens: [LBListen]
         switch job {
@@ -437,7 +518,9 @@ final class ListenBrainzSync: ObservableObject {
         }
         do {
             let rate = try await client.submit(type, listens, token: token)
-            // Recorded even if cancelled meanwhile: ListenBrainz has these now.
+            // Recorded even if sending was switched off meanwhile: ListenBrainz has these now.
+            // Not after Remove token or Delete all history, which cleared what they belong to.
+            guard gen == generation else { return }
             succeeded(job)
             failures = 0
             retryAt = nil
@@ -445,7 +528,7 @@ final class ListenBrainzSync: ObservableObject {
             notBefore = now().addingTimeInterval(rate.wait)
         } catch {
             busy = false
-            if Task.isCancelled { return }
+            if Task.isCancelled || gen != generation { return }
             failed(job, error as? LBError ?? .network("\(error)"))
         }
     }
