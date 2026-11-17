@@ -10,7 +10,8 @@ import SwiftUI
 /// period whole, the first screen of the window as it opens, the empty, importing,
 /// imported and failed screens, long names, covers, light and dark; and the share cards
 /// at their real 1080 x 1350. Times are in UTC so the pictures are the same on every run.
-/// Fails if a share card's text would be under 4.5:1 contrast.
+/// Fails if a share card's text would be under 4.5:1 contrast. That is worked out from the
+/// sleeve colors, not measured on the pixels, so it guards `SleeveColors`' constants.
 @MainActor
 enum LinerNotesSnapshot {
     static let width = LinerNotesWindow.defaultSize.width
@@ -136,7 +137,7 @@ enum LinerNotesSnapshot {
             ("share-card-pale-cover", model(year, artwork: artIndex, images: coverOverride(artIndex, yearStats, .pale))),
             ("share-card-black-cover", model(year, artwork: artIndex, images: coverOverride(artIndex, yearStats, .black))),
         ]
-        report += "\nShare cards, lowest text contrast:\n"
+        report += "\nShare cards, lowest text contrast, from the sleeve colors:\n"
         for (name, m) in cards {
             guard let card = ShareCard.make(m) else { Snapshot.fail("no share card for \(name)") }
             write(name, AnyView(card), dark: true, scale: 1)
