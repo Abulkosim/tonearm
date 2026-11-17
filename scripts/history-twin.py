@@ -10,7 +10,7 @@ any difference.
       compares every period and time zone below, and checks that no ip_addr, conn_country
       or platform value reached the database or an export.
   history-twin.py bench --app TONEARM_BINARY --work DIR
-      Times an import of 100k rows and all-time stats on 200k rows.
+      Times an import of 100k listens and all-time stats on 200k, and fails over 5 s or 300 ms.
 
 The rules (Sources/Tonearm/History/StatsEngine.swift and HistoryImport.swift follow them):
   Files: names starting with StreamingHistory, Streaming_History_ or endsong, ending .json,
@@ -28,6 +28,7 @@ import argparse
 import calendar
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -462,33 +463,35 @@ def cmd_check(a):
 
 
 def timing(stderr, prefix):
-    out = []
-    for line in stderr.splitlines():
-        if line.startswith(prefix):
-            out.append(int(line.rsplit(",", 1)[-1].split()[-2] if prefix == "import:" else line.split()[-2]))
-    return out
+    """Milliseconds from Tonearm's stderr lines that start with `prefix`."""
+    return [int(re.search(r"(\d+) ms$", line).group(1)) for line in stderr.splitlines() if line.startswith(prefix)]
 
 
 def cmd_bench(a):
     os.makedirs(a.work, exist_ok=True)
     fixture = os.path.join(HERE, "make-history-fixture.py")
     results = {}
-    for rows in (100_000, 200_000):
-        d = os.path.join(a.work, "bench-%d" % rows)
+    # The generator stops at its end date, and drops duplicates and skips, so ask for
+    # more rows than needed and check how many were stored.
+    for target, ask in ((100_000, 110_000), (200_000, 220_000)):
+        d = os.path.join(a.work, "bench-%d" % target)
         if not os.path.exists(d):
-            subprocess.run([sys.executable, fixture, d, "--rows", str(rows), "--extended-only"], check=True)
+            subprocess.run([sys.executable, fixture, d, "--rows", str(ask), "--extended-only"], check=True)
         _, err, _ = run_tonearm(a.app, ["--stats", d, "--period", "all,all,all,year:2024", "--tz", "Asia/Tashkent",
                                         "--json"])
-        imp = timing(err, "import:")
+        stored = int(re.search(r"(\d+) stored", err).group(1))
+        if stored < target:
+            sys.exit("only %d listens stored, wanted %d" % (stored, target))
+        imp = timing(err, "import:")[0]
         st = timing(err, "stats ")
-        results[rows] = (imp[0], st)
-        print("%d rows: import %d ms; all-time stats %s ms (first is cold); year 2024 %d ms"
-              % (rows, imp[0], ", ".join(map(str, st[:3])), st[3]))
-    import_ms = results[100_000][0]
-    stats_ms = min(results[200_000][1][:3])
-    ok = import_ms < 5000 and stats_ms < 300
-    line = ("Liner Notes speed: import of 100k rows %d ms (limit 5000), all-time stats on 200k rows %d ms warm, "
-            "%d ms cold (limit 300)" % (import_ms, stats_ms, results[200_000][1][0]))
+        results[target] = (imp, st, stored)
+        print("%d listens: import %d ms; all-time stats %s ms (first is cold); year 2024 %d ms"
+              % (stored, imp, ", ".join(map(str, st[:3])), st[3]))
+    import_ms, _, n_import = results[100_000]
+    _, st, n_stats = results[200_000]
+    ok = import_ms < 5000 and min(st[:3]) < 300 and st[0] < 300
+    line = ("Liner Notes speed: import of %d listens %d ms (limit 5000 for 100k), all-time stats on %d listens "
+            "%d ms warm, %d ms cold (limit 300 for 200k)" % (n_import, import_ms, n_stats, min(st[:3]), st[0]))
     print(line)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:

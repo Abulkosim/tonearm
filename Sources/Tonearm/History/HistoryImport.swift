@@ -267,7 +267,8 @@ struct HistoryFiles {
     }
 
     /// Unpacks with ditto, ignoring resource forks and extended attributes, and with unzip
-    /// if ditto fails (it failed in CI on a zip with a junk __MACOSX/._ entry).
+    /// if ditto fails. Plain ditto failed in CI with "File exists" on a zip that has both a
+    /// file and a __MACOSX/._ entry for it, which zips made in Finder can have.
     static func unzip(_ zip: URL, to dir: URL) throws {
         let tools = [("/usr/bin/ditto", ["-x", "-k", "--norsrc", "--noextattr", "--noacl", zip.path, dir.path]),
                      ("/usr/bin/unzip", ["-qq", "-o", zip.path, "-d", dir.path])]
