@@ -90,8 +90,9 @@ final class HistorySettingsModel: ObservableObject {
     }
 
     func runImport(_ urls: [URL]) async {
-        guard let store, !isImporting else { return }
+        guard let store, !isImporting, !isBusy else { return }
         isImporting = true
+        confirmingDelete = false
         progress = nil
         note = nil
         do {
@@ -161,8 +162,9 @@ final class HistorySettingsModel: ObservableObject {
 
     // MARK: Delete
 
+    /// Not while an import runs: the delete would wait behind it and the count would be old.
     func deleteAll(listenBrainz: ListenBrainzSync) async {
-        guard let store, !isBusy else { return }
+        guard let store, !isBusy, !isImporting else { return }
         isBusy = true
         defer {
             isBusy = false

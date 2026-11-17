@@ -176,7 +176,7 @@ struct SettingsView: View {
         line(history.summaryLine(recording: settings.recordHistory))
 
         actionRow(history.isImporting ? "Importing…" : "Import Spotify data…") { history.chooseImport() }
-            .disabled(history.isImporting)
+            .disabled(history.isImporting || history.confirmingDelete || history.isBusy)
             .help("The .zip Spotify sends from Account › Privacy › Download your data")
         if history.isImporting {
             progressLine(importProgressText, fraction: history.progress.map {
@@ -246,7 +246,7 @@ struct SettingsView: View {
                 smallButton("Delete", color: Theme.danger) {
                     Task { await history.deleteAll(listenBrainz: listenBrainz) }
                 }
-                .disabled(history.isBusy)
+                .disabled(history.isBusy || history.isImporting)
             }
         }
         .padding(.vertical, 4)
@@ -293,9 +293,34 @@ struct SettingsView: View {
         if let problem = listenBrainz.problem {
             line(problem, color: Theme.danger)
         }
+        if listenBrainz.connection == .tokenRejected {
+            rejectedRow
+        }
         note("Paste your user token from ListenBrainz. It is kept in your Keychain.", action: "Get token") {
             NSWorkspace.shared.open(ListenBrainz.settingsPage)
         }
+    }
+
+    /// The old token is still in the Keychain, and plays wait for a new one. Remove token
+    /// deletes both.
+    private var rejectedRow: some View {
+        let n = listenBrainz.saved.pending.count
+        return HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(n == 0 ? "Nothing waiting to send."
+                 : "\(HistorySettingsModel.count(n)) \(n == 1 ? "listen waits" : "listens wait") for a new token.")
+                .foregroundColor(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            removeTokenButton
+        }
+        .font(.system(size: 12))
+        .padding(.bottom, 4)
+    }
+
+    private var removeTokenButton: some View {
+        Button("Remove token") { listenBrainz.disconnect() }
+            .buttonStyle(QuietButtonStyle(color: Theme.secondary, hover: .white))
+            .fixedSize()
     }
 
     private func connect() {
@@ -334,14 +359,12 @@ struct SettingsView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 0)
-            Button("Remove token") { listenBrainz.disconnect() }
-                .buttonStyle(QuietButtonStyle(color: Theme.secondary, hover: .white))
-                .fixedSize()
+            removeTokenButton
         }
         .font(.system(size: 12))
         .frame(height: 24)
         if !settings.recordHistory {
-            line("Nothing is sent while recording is off.")
+            line("Recording is off, so new plays are not sent.")
         }
         line(listenBrainzStatus, color: listenBrainz.problem == nil ? Theme.secondary : Theme.danger)
         if let fraction = listenBrainz.historyProgress, let h = saved.history {

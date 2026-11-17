@@ -293,9 +293,10 @@ enum StateWalk {
             panel(.preview(summary: full, importing: ImportProgress(filesDone: 3, filesTotal: 7, rowsRead: 31_204)),
                   .preview(connection: .noToken), token: "0a1b2c3d-4e5f") { $0.listenBrainz = true },
             limit: nil)
-        add("settings-history-imported", "History: import done; ListenBrainz refused the token",
+        add("settings-history-imported", "History: import done; ListenBrainz refused the token, 3 waiting",
             panel(.preview(summary: full, note: imported),
-                  .preview(connection: .tokenRejected, problem: "ListenBrainz did not accept that token."),
+                  .preview(connection: .tokenRejected, saved: waiting,
+                           problem: "ListenBrainz no longer accepts the token. Paste a new one."),
                   token: "wrong") { $0.listenBrainz = true },
             limit: nil)
         add("settings-history-delete", "History: delete confirmation; ListenBrainz sending earlier listens",
