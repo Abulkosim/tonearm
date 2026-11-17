@@ -148,6 +148,8 @@ struct ShareSheet: View {
     }
     @State private var file: URL?
     @State private var saved: String?
+    /// Why the card can't be shared, when it can't.
+    @State private var problem: String?
     @Environment(\.colorScheme) private var scheme
 
     static let previewScale: CGFloat = 0.36
@@ -168,10 +170,11 @@ struct ShareSheet: View {
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(p.hairline))
 
-            Text(saved ?? "1080 × 1350, for a post or a story")
+            Text(problem ?? saved ?? "1080 × 1350, for a post or a story")
                 .font(.system(size: 12))
                 .foregroundColor(p.secondary)
-                .lineLimit(1)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 8) {
                 Button("Done", action: done)
@@ -195,21 +198,49 @@ struct ShareSheet: View {
             ShareLink(item: file) { Text("Share…") }
                 .buttonStyle(LinerButtonStyle(kind: .primary))
         } else {
+            // Only a snapshot shows it enabled: in the app there is no file to share.
             Button("Share…") {}
                 .buttonStyle(LinerButtonStyle(kind: .primary))
-                .disabled(image == nil && !model.isSnapshot)
+                .disabled(!model.isSnapshot)
         }
+    }
+
+    /// Where the card waits for the share menu. Emptied before each card and when the
+    /// window closes, so at most one picture of your listening sits in the temporary folder.
+    static var temporaryDirectory: URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("Tonearm Liner Notes", isDirectory: true)
+    }
+
+    static func removeTemporaryFiles() {
+        try? FileManager.default.removeItem(at: temporaryDirectory)
     }
 
     /// Renders the card and writes it to a temporary file for the share menu.
     private func prepare() {
-        guard image == nil, let card = ShareCard.make(model), let cg = card.render() else { return }
+        guard image == nil else { return }
+        guard let card = ShareCard.make(model) else {
+            problem = "Nothing played in this period, so there is no card."
+            return
+        }
+        guard let cg = card.render() else {
+            problem = "Couldn’t draw the card."
+            return
+        }
         image = NSImage(cgImage: cg, size: ShareCard.size)
-        guard !model.isSnapshot, let data = ShareCard.png(cg) else { return }
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("Tonearm Liner Notes", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let url = dir.appendingPathComponent(ShareCard.fileName(card.periodTitle))
-        if (try? data.write(to: url)) != nil { file = url }
+        guard !model.isSnapshot else { return }
+        guard let data = ShareCard.png(cg) else {
+            problem = "Couldn’t make a PNG of the card."
+            return
+        }
+        Self.removeTemporaryFiles()
+        let url = Self.temporaryDirectory.appendingPathComponent(ShareCard.fileName(card.periodTitle))
+        do {
+            try FileManager.default.createDirectory(at: Self.temporaryDirectory, withIntermediateDirectories: true)
+            try data.write(to: url)
+            file = url
+        } catch {
+            problem = "Can’t share it: \(error.localizedDescription) Save still works."
+        }
     }
 
     private func save() {

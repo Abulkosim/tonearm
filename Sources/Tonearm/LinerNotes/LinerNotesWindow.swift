@@ -85,6 +85,7 @@ enum LinerNotesWindow {
     private static func closed() {
         requested = false
         window = nil
+        ShareSheet.removeTemporaryFiles()
         if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
         closeObserver = nil
         // Back to a menu bar app, unless the welcome window or an update window is still up.
