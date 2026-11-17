@@ -9,6 +9,7 @@ name: Release
 #   SELF_SIGN_CERT_P12 ...  "Tonearm Self-Signed" certificate
 #   nothing                 ad-hoc
 # SPARKLE_ED_PRIVATE_KEY signs the update for the appcast. Without it a tag push fails.
+# Before publishing, update-e2e.yml checks that an old build installs this one through Sparkle.
 on:
   push:
     tags: ["v*"]
@@ -263,9 +264,20 @@ jobs:
           retention-days: 14
           compression-level: 0
 
+  # An old build (0.0.1) of this commit installs this version through Sparkle, from a local
+  # feed, with a throwaway certificate and key. Read-only, no secrets. Pull requests run it
+  # through update-e2e.yml instead.
+  update-e2e:
+    name: Update end to end
+    needs: prepare
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/update-e2e.yml
+
   release:
     name: Publish GitHub release
-    needs: [prepare, build]
+    needs: [prepare, build, update-e2e]
     if: needs.prepare.outputs.publish == 'true' && github.repository == 'Abulkosim/tonearm'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
