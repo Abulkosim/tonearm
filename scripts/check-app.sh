@@ -160,7 +160,10 @@ case "${EXPECT_SIGNING:-}" in
       || fail "designated requirement is not tied to the certificate" ;;
   developer-id)
     [[ "$app_authority" == "Developer ID Application:"* ]] || fail "expected a Developer ID, got $app_authority"
-    [[ "$app_requirement" == *"anchor apple generic"* && "$app_requirement" == *"subject.OU] = $app_team"* ]] \
+    [[ "$app_team" =~ ^[A-Z0-9]{10}$ ]] || fail "a Developer ID build should have a 10-character Team ID, got $app_team"
+    # codesign quotes a Team ID that starts with a digit ("9ABCDE1234"), not one that starts with a letter.
+    team_ou="subject\.OU\] = \"?$app_team\"?([ )]|$)"
+    [[ "$app_requirement" == *"anchor apple generic"* && "$app_requirement" =~ $team_ou ]] \
       || fail "designated requirement is not tied to Team ID $app_team" ;;
   "") ;;
   *) fail "unknown EXPECT_SIGNING ${EXPECT_SIGNING}" ;;
