@@ -1,0 +1,53 @@
+name: E2E
+
+# Checks the fake Spotify's dictionary (Tools/FakeSpotify) against the real Spotify app's.
+on:
+  pull_request:
+    paths:
+      - Sources/**
+      - Tools/**
+      - scripts/e2e.sh
+      - .github/workflows/e2e.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # The real dictionary is read on the runner and never stored or uploaded.
+  dictionary:
+    name: Fake matches Spotify's dictionary
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Spotify
+        id: install
+        run: |
+          if HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask spotify; then
+            echo "installed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::brew install --cask spotify failed; the dictionary check is skipped"
+            echo "Dictionary check skipped: the Spotify cask did not install." >> "$GITHUB_STEP_SUMMARY"
+            echo "installed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Compare dictionaries
+        if: steps.install.outputs.installed == 'true'
+        run: |
+          version="$(defaults read /Applications/Spotify.app/Contents/Info.plist CFBundleShortVersionString)"
+          echo "Spotify $version"
+          sdef /Applications/Spotify.app > "$RUNNER_TEMP/spotify.sdef"
+          python3 Tools/FakeSpotify/check-sdef.py "$RUNNER_TEMP/spotify.sdef" Tools/FakeSpotify/Spotify.sdef \
+            | tee "$RUNNER_TEMP/check.txt"
+          echo "Dictionary checked against Spotify $version: $(tail -n 1 "$RUNNER_TEMP/check.txt")" >> "$GITHUB_STEP_SUMMARY"
+          rm -f "$RUNNER_TEMP/spotify.sdef"
