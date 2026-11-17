@@ -31,7 +31,7 @@ A release that is already published is never replaced; the workflow refuses. To 
   - `scripts/package.sh` makes `Tonearm-X.Y.Z.zip`, `Tonearm-X.Y.Z.dmg` (with an Applications link), the same two files as `Tonearm.zip` and `Tonearm.dmg`, and `SHA256SUMS.txt`.
   - `scripts/check-app.sh` unzips the app and runs the launch gate on it (see [Release gates](#release-gates)).
   - `scripts/sparkle-tools.sh` downloads Sparkle's `sign_update` for the pinned version and checks its SHA-256. `scripts/appcast.sh` signs the versioned zip and writes `appcast.xml`, then checks the signature with `sign_update --verify` and with OpenSSL against the `SUPublicEDKey` in the built app.
-- **update-e2e** (macos-15, read-only, no secrets): `update-e2e.yml` builds the tagged commit twice and checks that the old build installs the new one through Sparkle (see [Release gates](#release-gates)). It runs next to **build**.
+- **update-e2e** (macos-15, read-only, no secrets): `update-e2e.yml` builds the tagged commit twice and the previous release tag once, and checks that each old build installs the new one through Sparkle (see [Release gates](#release-gates)). It runs next to **build**.
 - **release** (Ubuntu), only after **build** and **update-e2e** pass: verifies the checksums, checks the appcast signature again against the `SUPublicEDKey` in the tagged `Info.plist`, records build provenance for every file, and creates the release with `gh release create --latest`. The notes are `changelogs/vX.Y.Z.md` plus an install section that says how the build was signed. This is the only job with write access, and it alone gets the OIDC token and attestation permissions.
 
 Actions are pinned to commit SHAs. Dependabot proposes updates weekly.
@@ -55,7 +55,7 @@ gh workflow run release.yml -R Abulkosim/tonearm -f version=0.0.0-test
 
 A dry run builds and uploads the files as a `release-<version>` artifact. It never creates a release. Without `-f sign=true` it signs ad-hoc and signs the appcast with a throwaway key, so every step still runs. With `-f sign=true` it uses the repository secrets, if they exist. Pull requests never get the secrets.
 
-CI also runs on every pull request: an ad-hoc build that is checked and launched, a build signed with a throwaway self-signed certificate that goes through the same import, trust, signing and launch steps as a release, and `scripts/package.sh`. A Swift compiler warning fails the build.
+CI also runs on every pull request: an ad-hoc build that is checked and launched, a build signed with a throwaway self-signed certificate that goes through the same import, trust, signing and launch steps as a release, and `scripts/package.sh`. A Swift compiler warning in the app build fails CI. Warnings in the tests are not counted.
 
 ## Release gates
 
@@ -73,13 +73,13 @@ Runs on every CI build (ad-hoc and self-signed) and on the packaged app in every
 
 Then it starts the app with `--snapshot` on arm64 and under Rosetta.
 
-`scripts/launch-gate-test.sh` proves the gate works. The self-signed CI job re-signs its build the way v0.3.0 was signed (`--options runtime` with the self-signed certificate) and downloads the published v0.3.0 (pinned by SHA-256). check-app.sh must fail both on library validation, and pass the normal build.
+`scripts/launch-gate-test.sh` proves the gate works. The self-signed CI job re-signs its build the way v0.3.0 was signed (`--options runtime` with the self-signed certificate) and downloads the published v0.3.0 (pinned by SHA-256). check-app.sh must fail both on library validation, fail a copy with a test `SUFeedURL` on `Info.plist`, and pass the normal build. If the v0.3.0 download fails, that one case is skipped with a warning; the re-signed copy tests the same rule.
 
 It can't prove: anything macOS checks that is not in this list, like Gatekeeper on a quarantined download, a revoked certificate, or a change in a future macOS. CI runners do not enforce library validation, so the launch at the end proves only that dyld finds Sparkle.
 
 ### Live launch
 
-CI opens the ad-hoc and the self-signed build with `open`, the way a user does, and checks the app is still running 10 seconds later. This catches a crash at startup, including in Sparkle's start. On its own it would have passed v0.3.0, because the runner does not enforce library validation.
+CI opens the ad-hoc and the self-signed build with `open`, the way a user does, and checks the app is still running 10 seconds later (`scripts/live-launch.sh`). Sparkle starts, but its automatic checks are off for the launch. Otherwise a branch older than the latest release would download that release from the real feed and replace the build in place, and the later steps would test the published app. The script also fails if the bundle changed. This catches a crash at startup, including in Sparkle's start. On its own it would have passed v0.3.0, because the runner does not enforce library validation.
 
 ### Update end to end: `scripts/update-e2e.sh`
 
@@ -94,6 +94,8 @@ It can't prove:
 - Anything about GitHub's download: the feed is local HTTP. The daily feed check covers the public feed.
 - Gatekeeper, quarantine, the move to `/Applications`, an admin password prompt, the Spotify permission carrying over, or library validation (the runner does not enforce it; the launch gate does).
 - Developer ID or notarized builds.
+
+A tag push can only publish if the previous release tag still builds on today's runner. If it stops building (say, after an Xcode update on the runner), set `gh variable set UPDATE_E2E_OLD_TAG -R Abulkosim/tonearm --body none` to skip that case, or a tag to update from a different one, and delete the variable after the release. A manual run of `update-e2e.yml` takes the same value as the `old_tag` input. The script checks that the build it made from the tag has that tag's version.
 
 ### Public feed: `feed.yml`
 
