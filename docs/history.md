@@ -27,7 +27,7 @@ Tonearm asks the Spotify app on your Mac what is playing, the same way it shows 
 
 `~/Library/Application Support/Tonearm/history.sqlite`, an SQLite database. Settings → History → Show in Finder opens the folder.
 
-If ListenBrainz is on, `listenbrainz.json` in the same folder holds the listens waiting to be sent. The ListenBrainz token is in your login Keychain, under "Tonearm ListenBrainz token".
+Once you connect ListenBrainz, `listenbrainz.json` in the same folder holds the listens waiting to be sent. The ListenBrainz token is in your login Keychain, under "Tonearm ListenBrainz token".
 
 ## Import your Spotify history
 
@@ -46,6 +46,8 @@ Settings → History → Export saves every listen as CSV or JSON, oldest first,
 `started_at, ended_at, ms_played, kind, title, artist, album, spotify_uri, duration_ms, artwork_url, source, skipped, shuffle, offline, incognito, reason_start, reason_end`
 
 Times are ISO 8601 in UTC. `source` is `live` for what Tonearm recorded and `import` for what came from Spotify's export.
+
+In the CSV, text that starts with `=`, `+`, `-` or `@` gets a `'` in front, so Excel and Numbers show it instead of running it as a formula. The JSON is exactly as stored.
 
 ## Delete
 
@@ -71,12 +73,17 @@ What it sends, following the [ListenBrainz API rules](https://listenbrainz.readt
 - When a song starts, "playing now": the title, artist, album, length and Spotify link.
 - Once you have listened to half the song or 4 minutes, whichever is less, the listen itself, with the time it started. Each play is sent once.
 - Podcasts are not sent.
-- Nothing is sent while Record listening is off. ListenBrainz gets what Tonearm records, nothing more.
+- While Record listening is off, new plays are not recorded, so they are not sent either. Listens already waiting still go out.
 
 If you are offline, or ListenBrainz is down, listens wait in `listenbrainz.json` and Tonearm tries again later: after 15 seconds, then 30, then 1 minute, doubling up to every 15 minutes. A listen leaves the queue only after ListenBrainz has accepted it, so quitting Tonearm or restarting the Mac loses nothing. Tonearm also follows the rate limit headers ListenBrainz sends and never makes more than one request a second.
 
-If ListenBrainz stops accepting the token, Tonearm stops sending, keeps the queue, and asks for a new token.
+If ListenBrainz stops accepting the token, Tonearm stops sending and asks for a new token. New plays still wait in the queue and go out once you paste a new one. Remove token deletes the old token and the queue.
 
-**Send earlier listens.** Once connected, this sends everything stored from before you connected, such as an imported Spotify export. It sends 1,000 listens per request, as ListenBrainz's "import" kind, and remembers where it got to, so it goes on after a quit or an error. Spotify's export doesn't include song lengths, so for these Tonearm uses the longest time you ever played the song as its length, and skips plays under 30 seconds.
+**Send earlier listens.** Once connected, this sends what is stored but was not sent as you played: everything from before you connected, such as an imported Spotify export, and anything played while Send to ListenBrainz was off. It sends 1,000 listens per request, as ListenBrainz's "import" kind, and remembers where it got to, so it goes on after a quit or an error.
+
+The same rule applies: half the song or 4 minutes, and never under 30 seconds. Spotify's export doesn't include song lengths, so Tonearm works them out:
+
+- The extended streaming history says how each play ended. A play that ran to the end of the song gives its length. A play counts if it reached half of that. A song you never played to the end needs 4 minutes, so songs you always skipped are not sent.
+- The account data download doesn't say how a play ended. For those, the longest time you ever played the song stands in for its length. A song you played once counts if you played it for 30 seconds or more.
 
 **Remove token** deletes the token from the Keychain and forgets the queue. Listens already on ListenBrainz stay there.
