@@ -40,6 +40,7 @@ final class LinerNotesModel: ObservableObject {
     private let store: HistoryStore?
     private let fixedNow: Date?
     private var started = false
+    private var lastRefresh: Date?
     private var statsToken = 0
     private var loadingURLs = Set<String>()
     /// The user picked a period; refreshes keep it.
@@ -83,9 +84,18 @@ final class LinerNotesModel: ObservableObject {
         Task { await refresh() }
     }
 
+    /// The window came to the front: picks up what played meanwhile, without dimming the
+    /// page. Skipped right after a refresh, such as the one when the window opens.
+    func windowBecameKey() {
+        guard started, let lastRefresh, Date().timeIntervalSince(lastRefresh) > 2 else { return }
+        Task { await refresh(quiet: true) }
+    }
+
     /// Reads the years and count again, then the stats. Keeps the period the user chose.
-    func refresh() async {
+    /// `quiet` leaves the page as it is while the stats load, and touches it only if they changed.
+    func refresh(quiet: Bool = false) async {
         guard let store else { return }
+        lastRefresh = Date()
         do {
             let years = try await store.years(timeZone: timeZone)
             let total = try await store.count()
@@ -98,8 +108,8 @@ final class LinerNotesModel: ObservableObject {
             }
             if !chosePeriod { period = defaultPeriod(kind: period.kind) }
             if phase != .ready { phase = .ready }
-            await loadStats()
-            if let index = try? await store.artwork() { artwork = index }
+            await loadStats(dim: !quiet || stats == nil)
+            if let index = try? await store.artwork(), index != artwork { artwork = index }
             loadImages()
         } catch {
             phase = .failed(Self.message(error))
@@ -113,17 +123,17 @@ final class LinerNotesModel: ObservableObject {
         return Period.of(kind, containing: LocalDay(year: last, month: 12, day: 31))
     }
 
-    private func loadStats() async {
+    private func loadStats(dim: Bool = true) async {
         guard let store else { return }
         statsToken += 1
         let token = statsToken
         let wanted = period
-        loadingStats = true
+        if dim { loadingStats = true }
         do {
             let s = try await store.stats(for: wanted, timeZone: timeZone)
             guard token == statsToken else { return }
-            stats = s
-            loadingStats = false
+            if s != stats { stats = s }
+            if loadingStats { loadingStats = false }
             loadImages()
         } catch {
             guard token == statsToken else { return }
