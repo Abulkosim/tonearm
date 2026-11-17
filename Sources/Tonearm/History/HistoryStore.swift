@@ -83,9 +83,17 @@ final class HistoryStore: @unchecked Sendable {
         }
     }
 
-    /// Waits for queued writes. Call before the app quits.
+    /// Waits for queued writes. Blocks for as long as an import runs; the app uses
+    /// `flush(timeout:)`.
     func flush() {
         queue.sync {}
+    }
+
+    /// Waits for queued writes, but no longer than `timeout` seconds.
+    func flush(timeout: TimeInterval) {
+        let done = DispatchSemaphore(value: 0)
+        queue.async { done.signal() }
+        _ = done.wait(timeout: .now() + timeout)
     }
 
     // MARK: Queue
