@@ -9,7 +9,7 @@ struct MenuBarLabel: View {
         if let title = currentTitle {
             HStack(spacing: 4) {
                 Image(systemName: model.isPlaying ? "music.note" : "pause.fill")
-                Text(title)
+                Text(Self.leftToRight(title, firstPart: model.track.map { Self.singleLine($0.title) } ?? ""))
             }
         } else {
             Image(systemName: Self.appGlyph)
@@ -37,6 +37,19 @@ struct MenuBarLabel: View {
         var parts = [singleLine(title)]
         if showArtist { parts.append(singleLine(artist)) }
         return shorten(parts.filter { !$0.isEmpty }.joined(separator: " · "), to: maxLength)
+    }
+
+    /// Lays out `text`, which is `title(...)`, left to right with the song title first, and keeps
+    /// each part's own direction inside it. Without this an Arabic title made the whole line
+    /// right to left: the artist came first and the ellipsis landed on the wrong end.
+    /// `firstPart` is the single-line song title. Pure, for tests.
+    static func leftToRight(_ text: String, firstPart: String) -> String {
+        let lrm = "\u{200E}"
+        func isolate(_ s: String) -> String { "\u{2068}" + s + "\u{2069}" }
+        let separator = " · "
+        guard !firstPart.isEmpty, text.hasPrefix(firstPart + separator) else { return lrm + isolate(text) }
+        let rest = String(text.dropFirst(firstPart.count + separator.count))
+        return lrm + isolate(firstPart) + separator + isolate(rest)
     }
 
     /// Collapses line breaks, tabs and repeated spaces, which would break the menu bar layout.
