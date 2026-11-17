@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import XCTest
 @testable import Tonearm
 
@@ -52,6 +53,62 @@ final class WordClampTests: XCTestCase {
             XCTAssertTrue(option.hasSuffix("…"))
             XCTAssertFalse(option.hasSuffix("、…"))
         }
+    }
+
+    func testJoinersOnlyGoInsideCJKWords() {
+        XCTAssertEqual(WordClampedText.joinWords("Florence + The Machine"), "Florence + The Machine")
+        XCTAssertEqual(WordClampedText.joinWords("Оркестр Северного ветра"), "Оркестр Северного ветра")
+        XCTAssertEqual(WordClampedText.joinWords("سامي يوسف"), "سامي يوسف")
+        let name = "宇多田ヒカルと東京フィルハーモニー交響楽団"
+        let joined = WordClampedText.joinWords(name)
+        XCTAssertNotEqual(joined, name)
+        XCTAssertEqual(joined.replacingOccurrences(of: WordClampedText.wordJoiner, with: ""), name)
+    }
+
+    /// The wrap itself, not just where the ellipsis goes: Core Text lays the names out at
+    /// every width their longest word fits in, and no line may start inside a word.
+    func testJapaneseWrapsOnlyBetweenWords() {
+        let font = NSFont.systemFont(ofSize: 13)
+        func attributed(_ s: String) -> NSAttributedString { NSAttributedString(string: s, attributes: [.font: font]) }
+        func lineStarts(_ s: String, width: CGFloat) -> [Int] {
+            let setter = CTFramesetterCreateWithAttributedString(attributed(s))
+            let path = CGPath(rect: CGRect(x: 0, y: 0, width: width, height: 100_000), transform: nil)
+            let frame = CTFramesetterCreateFrame(setter, CFRange(location: 0, length: 0), path, nil)
+            let lines = CTFrameGetLines(frame) as? [CTLine] ?? []
+            return lines.map { CTLineGetStringRange($0).location }
+        }
+        // UTF-16 offsets strictly inside a word, from the word breaker on the text as written.
+        func insideWords(_ s: String) -> Set<Int> {
+            var inside = Set<Int>()
+            s.enumerateSubstrings(in: s.startIndex..<s.endIndex, options: [.byWords, .substringNotRequired]) {
+                _, range, _, _ in
+                let r = NSRange(range, in: s)
+                if r.length > 1 { inside.formUnion((r.location + 1)..<(r.location + r.length)) }
+            }
+            return inside
+        }
+        let names = ["宇多田ヒカルと坂本龍一と東京フィルハーモニー交響楽団", "夜に駆ける、そしてまた夜明けまで歩き続ける長い道"]
+        var plainSplits = 0, widthsTried = 0
+        for name in names {
+            let joined = WordClampedText.joinWords(name)
+            let longest = CTLineGetTypographicBounds(
+                CTLineCreateWithAttributedString(attributed(WordClampedText.longestWord(name))), nil, nil, nil)
+            let inside = insideWords(name)
+            // A line start in the joined text, as an offset in `name`: less the joiners before it.
+            let joinerOffsets = joined.utf16.enumerated().filter { $0.element == 0x2060 }.map(\.offset)
+            XCTAssertFalse(joinerOffsets.isEmpty)
+            func original(_ start: Int) -> Int { start - joinerOffsets.filter { $0 < start }.count }
+            for width in stride(from: CGFloat(ceil(longest)) + 1, through: 400, by: 5) {
+                widthsTried += 1
+                for start in lineStarts(joined, width: width).dropFirst() {
+                    XCTAssertFalse(inside.contains(original(start)), "\(name) at \(width) pt: a line starts inside a word")
+                }
+                plainSplits += lineStarts(name, width: width).dropFirst().filter(inside.contains).count
+            }
+        }
+        XCTAssertGreaterThan(widthsTried, 20)
+        // Without the joiners Core Text does split words, so the check above can fail.
+        XCTAssertGreaterThan(plainSplits, 0)
     }
 }
 
