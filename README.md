@@ -65,6 +65,12 @@ While the player is open:
 
 Global shortcuts, if you turn them on in settings: ⌃⌥P play or pause, ⌃⌥N next, ⌃⌥B previous.
 
+## History
+
+Tonearm keeps a record of what you play, on your Mac, for Liner Notes. To start with years of history instead of none, ask Spotify for your data (Account → Privacy → Download your data) and import the .zip in Settings → History. From there you can also export everything as CSV or JSON, delete it all, or turn recording off.
+
+If you use [ListenBrainz](https://listenbrainz.org), Tonearm can send your listens there too. That is off until you paste your token. Details in [docs/history.md](docs/history.md).
+
 ## Permission
 
 Tonearm controls Spotify through Apple Events, so macOS asks once. If you clicked Don't Allow, open System Settings → Privacy & Security → Automation → Tonearm and turn on Spotify. If Tonearm isn't listed there, see [docs/permissions.md](docs/permissions.md).
@@ -73,7 +79,9 @@ Tonearm controls Spotify through Apple Events, so macOS asks once. If you clicke
 
 Tonearm has no analytics and no account. It talks to the Spotify app on your Mac through AppleScript and never uses the Spotify Web API.
 
-It makes two kinds of network requests: it downloads the cover image from the URL Spotify reports, and once a day it asks GitHub whether there is a new version.
+It makes two kinds of network requests: it downloads the cover image from the URL Spotify reports, and once a day it asks GitHub whether there is a new version. A third only if you turn it on: sending your listens to ListenBrainz.
+
+Your listening history stays in `~/Library/Application Support/Tonearm`. See [docs/history.md](docs/history.md) for what is in it.
 
 ## Uninstall
 
@@ -94,8 +102,12 @@ By hand:
    defaults delete io.github.abulkosim.tonearm
    rm -rf ~/Library/Caches/io.github.abulkosim.tonearm \
      ~/Library/HTTPStorages/io.github.abulkosim.tonearm \
-     ~/Library/Application\ Support/io.github.abulkosim.tonearm
+     ~/Library/Application\ Support/io.github.abulkosim.tonearm \
+     ~/Library/Application\ Support/Tonearm
+   security delete-generic-password -s io.github.abulkosim.tonearm.listenbrainz 2>/dev/null
    ```
+
+   `Application Support/Tonearm` holds your listening history. The `security` line removes the ListenBrainz token, if you added one.
 
 ## Questions
 
@@ -103,6 +115,7 @@ By hand:
 - [Nothing happens when I open it](docs/faq.md#nothing-happens-when-i-open-it)
 - [It says Spotify isn't running, but it is](docs/faq.md#it-says-spotify-isnt-running-but-it-is)
 - [Why isn't Tonearm notarized or in the App Store?](docs/faq.md#why-isnt-tonearm-notarized-or-in-the-app-store)
+- [Does Tonearm send my listening history anywhere?](docs/faq.md#does-tonearm-send-my-listening-history-anywhere)
 
 More in [docs/faq.md](docs/faq.md).
 
