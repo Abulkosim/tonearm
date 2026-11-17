@@ -23,6 +23,9 @@ struct CoverView: View {
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        // A faint rim, so a black cover doesn't melt into the dark background.
+        .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
         .accessibilityHidden(true)
     }
 }
