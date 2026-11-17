@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
 # Updates an old Tonearm to the current one through Sparkle, with no human, from a feed on
 # 127.0.0.1. Proves that a release built by these scripts can be found, downloaded, checked
-# (EdDSA and code signature), installed and relaunched by the version before it.
+# (EdDSA and code signature), installed and relaunched by an older version.
 #
 # 1. Make a throwaway EdDSA key with Sparkle's generate_keys.
-# 2. Build OLD (0.0.1, build 1) and NEW (the version in Info.plist) with the test feed and key
-#    (TONEARM_TEST_UPDATE=1, see build-app.sh), signed with SIGN_IDENTITY.
+# 2. Build NEW (the version in Info.plist) and OLD (0.0.1, build 1) from this commit with the
+#    test feed and key (TONEARM_TEST_UPDATE=1, see build-app.sh), signed with SIGN_IDENTITY.
 # 3. Package NEW with package.sh and appcast.sh, as a release does, and serve it.
 # 4. Install OLD in a temporary Applications folder and open it. Sparkle checks at once
 #    (there is no last check date), downloads, and Updater.swift installs right away because
 #    no Tonearm window is open.
 # 5. Assert the installed app is NEW, its signature verifies, and it stays up 10 s.
+# 6. Again, with OLD built from the newest release tag older than NEW, so the updater code
+#    that runs is the one users have installed. Its Info.plist gets the test feed, key and
+#    build 1, and the app is signed again with SIGN_IDENTITY.
 #
 # CI only: it resets Tonearm's user defaults and kills Tonearm. TONEARM_E2E_LOCAL=1 overrides.
 # Usage: SIGN_IDENTITY="Tonearm Self-Signed" scripts/update-e2e.sh <work dir>
 # Environment: SIGN_IDENTITY (a codesign identity in the keychain, not ad-hoc),
-#   EXPECT_SIGNING (passed to check-app.sh, default self-signed), OPENSSL (OpenSSL 3).
+#   EXPECT_SIGNING (passed to check-app.sh, default self-signed), OPENSSL (OpenSSL 3),
+#   OLD_TAG (release tag for step 6; default: the newest vX.Y.Z tag on origin below NEW).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -66,8 +70,6 @@ trap cleanup EXIT
 
 new_version="$("$plistbuddy" -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
 new_build="$(scripts/build-number.sh "$new_version")"
-old_version=0.0.1
-old_build=1
 
 # build-app.sh must refuse the overrides without TONEARM_TEST_UPDATE=1. It checks before building.
 if TONEARM_TEST_UPDATE='' TONEARM_TEST_FEED_URL=http://127.0.0.1:1/appcast.xml \
@@ -103,7 +105,7 @@ build() { # version build
   EXPECT_SIGNING="$EXPECT_SIGNING" EXPECT_VERSION="$1" EXPECT_BUILD="$2" EXPECT_FEED_URL="$feed" EXPECT_ED_KEY="$public_key" \
     scripts/check-app.sh build/Tonearm.app
 }
-build "$old_version" "$old_build"
+build 0.0.1 1
 ditto build/Tonearm.app "$work/old/Tonearm.app"
 build "$new_version" "$new_build"
 
@@ -127,50 +129,80 @@ done
 curl -fsS "$feed" > /dev/null || fail "the feed server does not answer"
 cat "$work/serve/appcast.xml"
 
-# 4. Install OLD and open it like a user who has used it before: the welcome window was shown
-# (it would hold the install back while it is the key window), Sparkle's settings are the
-# Info.plist defaults, and there is no last check date, so Sparkle checks right away.
-defaults delete "$bundle_id" > /dev/null 2>&1 || true
-defaults write "$bundle_id" welcomeShown -bool true
-ditto "$work/old/Tonearm.app" "$installed"
-"$plistbuddy" -c 'Print :CFBundleVersion' "$installed/Contents/Info.plist"
-open -n "$installed"
-old_pid=""
-for _ in $(seq 1 30); do
-  old_pid="$(pgrep -f "$exe" | head -n 1 || true)"
-  [ -n "$old_pid" ] && break
-  sleep 1
-done
-[ -n "$old_pid" ] || fail "OLD did not start"
-say "OLD $old_version ($old_build) running as $old_pid, waiting for the update"
+# 4 and 5. Installs OLD, opens it like a user who has used it before, and waits for NEW.
+# The welcome window was shown (it would hold the install back while it is the key window);
+# Sparkle's settings are the Info.plist defaults, and there is no last check date, so Sparkle
+# checks right away.
+update_from() { # old app, label
+  local old="$1" label="$2" old_build current old_pid="" new_pid="" deadline began
+  pkill -f "$exe" 2> /dev/null || true
+  rm -rf "$installed"
+  defaults delete "$bundle_id" > /dev/null 2>&1 || true
+  defaults write "$bundle_id" welcomeShown -bool true
+  ditto "$old" "$installed"
+  old_build="$("$plistbuddy" -c 'Print :CFBundleVersion' "$installed/Contents/Info.plist")"
+  local http_lines; http_lines="$(wc -l < "$work/logs/http.log")"
+  open -n "$installed"
+  for _ in $(seq 1 30); do
+    old_pid="$(pgrep -f "$exe" | head -n 1 || true)"
+    [ -n "$old_pid" ] && break
+    sleep 1
+  done
+  [ -n "$old_pid" ] || fail "$label: OLD did not start"
+  say "$label: OLD build $old_build running as $old_pid, waiting for the update"
 
-# 5. Wait for the installed bundle to become NEW.
-deadline=$((SECONDS + 300))
-while :; do
-  current="$("$plistbuddy" -c 'Print :CFBundleVersion' "$installed/Contents/Info.plist" 2> /dev/null || true)"
-  [ "$current" = "$new_build" ] && break
-  [ "$SECONDS" -lt "$deadline" ] || fail "no update after 300 s; installed build is '$current'"
-  sleep 5
-done
-say "installed bundle is now build $current after $((SECONDS + 300 - deadline)) s"
-grep -q "GET /appcast.xml" "$work/logs/http.log" || fail "Sparkle never fetched the feed"
-grep -q "GET /$(basename "$zip")" "$work/logs/http.log" || fail "Sparkle never downloaded the update"
+  began=$SECONDS
+  deadline=$((SECONDS + 300))
+  while :; do
+    current="$("$plistbuddy" -c 'Print :CFBundleVersion' "$installed/Contents/Info.plist" 2> /dev/null || true)"
+    [ "$current" = "$new_build" ] && break
+    [ "$SECONDS" -lt "$deadline" ] || fail "$label: no update after 300 s; installed build is '$current'"
+    sleep 5
+  done
+  say "$label: installed bundle is now build $current after $((SECONDS - began)) s"
+  tail -n "+$((http_lines + 1))" "$work/logs/http.log" > "$work/logs/http-$label.log"
+  grep -q "GET /appcast.xml" "$work/logs/http-$label.log" || fail "$label: Sparkle never fetched the feed"
+  grep -q "GET /$(basename "$zip")" "$work/logs/http-$label.log" || fail "$label: Sparkle never downloaded the update"
 
-# NEW must be relaunched (by Sparkle) and stay up.
-new_pid=""
-for _ in $(seq 1 60); do
-  new_pid="$(pgrep -f "$exe" | grep -vx "$old_pid" | head -n 1 || true)"
-  [ -n "$new_pid" ] && break
-  sleep 1
-done
-[ -n "$new_pid" ] || fail "NEW was not relaunched after the update"
-! kill -0 "$old_pid" 2> /dev/null || fail "OLD ($old_pid) is still running"
-sleep 10
-kill -0 "$new_pid" 2> /dev/null || fail "NEW ($new_pid) exited within 10 s"
-say "NEW running as $new_pid for 10 s"
+  # NEW must be relaunched (by Sparkle) and stay up.
+  for _ in $(seq 1 60); do
+    new_pid="$(pgrep -f "$exe" | grep -vx "$old_pid" | head -n 1 || true)"
+    [ -n "$new_pid" ] && break
+    sleep 1
+  done
+  [ -n "$new_pid" ] || fail "$label: NEW was not relaunched after the update"
+  if kill -0 "$old_pid" 2> /dev/null; then fail "$label: OLD ($old_pid) is still running"; fi
+  sleep 10
+  kill -0 "$new_pid" 2> /dev/null || fail "$label: NEW ($new_pid) exited within 10 s"
+  say "$label: NEW running as $new_pid for 10 s"
 
-codesign --verify --deep --strict --verbose=2 "$installed"
-EXPECT_SIGNING="$EXPECT_SIGNING" EXPECT_VERSION="$new_version" EXPECT_BUILD="$new_build" EXPECT_FEED_URL="$feed" EXPECT_ED_KEY="$public_key" \
-  scripts/check-app.sh "$installed"
+  codesign --verify --deep --strict --verbose=2 "$installed"
+  EXPECT_SIGNING="$EXPECT_SIGNING" EXPECT_VERSION="$new_version" EXPECT_BUILD="$new_build" \
+    EXPECT_FEED_URL="$feed" EXPECT_ED_KEY="$public_key" scripts/check-app.sh "$installed"
+  say "ok: $label (build $old_build) updated itself to $new_version ($new_build) from $feed"
+}
+update_from "$work/old/Tonearm.app" this-commit
+
+# 6. OLD from the newest release older than NEW, built with that release's own scripts.
+old_tag="${OLD_TAG:-}"
+if [ -z "$old_tag" ]; then
+  old_tag="$(git ls-remote --tags --refs origin 'v*' | sed 's:.*refs/tags/::' \
+    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V \
+    | while read -r t; do [ "$(scripts/build-number.sh "${t#v}")" -lt "$new_build" ] && echo "$t"; done \
+    | tail -n 1 || true)"
+fi
+[ -n "$old_tag" ] || fail "no release tag older than $new_version"
+git fetch --quiet --depth 1 origin "refs/tags/$old_tag:refs/tags/$old_tag"
+mkdir -p "$work/release-src"
+git archive "$old_tag" | tar -x -C "$work/release-src"
+(cd "$work/release-src" && SIGN_IDENTITY="$SIGN_IDENTITY" BUILD=1 scripts/build-app.sh) > "$work/logs/build-$old_tag.log" 2>&1 \
+  || { tail -n 60 "$work/logs/build-$old_tag.log"; fail "could not build $old_tag"; }
+release_app="$work/release-src/build/Tonearm.app"
+plutil -replace SUFeedURL -string "$feed" "$release_app/Contents/Info.plist"
+plutil -replace SUPublicEDKey -string "$public_key" "$release_app/Contents/Info.plist"
+# Sign the app again the way that release's build-app.sh signs a self-signed app (no runtime).
+codesign --force --timestamp=none --sign "$SIGN_IDENTITY" \
+  --entitlements "$work/release-src/Resources/Tonearm.entitlements" "$release_app"
+codesign --verify --deep --strict "$release_app"
+update_from "$release_app" "$old_tag"
 dump_logs > /dev/null
-say "ok: $old_version ($old_build) updated itself to $new_version ($new_build) from $feed"
