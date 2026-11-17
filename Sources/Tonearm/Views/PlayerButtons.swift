@@ -212,14 +212,16 @@ private struct CoverButtonBody: View {
     let configuration: ButtonStyleConfiguration
     @State var hovering = false
     @Environment(\.accessibilityReduceMotion) var reduceMotion
+    @Environment(\.isEnabled) var isEnabled
     @Environment(\.isFocused) private var isFocused
 
     var body: some View {
         configuration.label
             .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(.white)
+            // Grey when there is nothing to do, like a local file's link.
+            .foregroundColor(isEnabled ? .white : .white.opacity(0.35))
             .frame(width: 28, height: 28)
-            .background(Circle().fill(Color.black.opacity(hovering ? 0.8 : 0.6)))
+            .background(Circle().fill(Color.black.opacity(hovering && isEnabled ? 0.8 : 0.6)))
             .contentShape(Circle())
             .focusOutline(Circle(), isFocused: isFocused)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.92 : 1)
@@ -240,12 +242,10 @@ struct LinkText: View {
 
     var body: some View {
         Button(action: action) {
-            Text(text)
+            FadingLine(Text(text)
                 .font(font)
                 .foregroundColor(color)
-                .underline(hovering && enabled)
-                .lineLimit(1)
-                .truncationMode(.tail)
+                .underline(hovering && enabled), string: text)
         }
         .buttonStyle(PressDimStyle())
         .disabled(!enabled)
