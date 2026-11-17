@@ -7,8 +7,29 @@
 #   BUILD          CFBundleVersion. Default: the value in Resources/Info.plist.
 #   SIGN_IDENTITY  codesign identity: "-" (ad-hoc, the default), "Tonearm Self-Signed",
 #                  or "Developer ID Application: ...". Only Developer ID gets a secure timestamp.
+#
+# Test only, for scripts/update-e2e.sh. Refused unless TONEARM_TEST_UPDATE=1, and never with
+# a Developer ID. check-app.sh also fails any bundle whose SUFeedURL or SUPublicEDKey differ
+# from Resources/Info.plist, so a release can't ship them.
+#   TONEARM_TEST_FEED_URL  SUFeedURL, on 127.0.0.1 or localhost only
+#   TONEARM_TEST_ED_KEY    SUPublicEDKey
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# Checked before the slow build so a refusal is quick.
+test_feed="${TONEARM_TEST_FEED_URL:-}"
+test_key="${TONEARM_TEST_ED_KEY:-}"
+if [ -n "$test_feed$test_key" ]; then
+  refuse() { echo "build-app: refusing test overrides: $*" >&2; exit 1; }
+  [ "${TONEARM_TEST_UPDATE:-}" = 1 ] || refuse "TONEARM_TEST_FEED_URL and TONEARM_TEST_ED_KEY need TONEARM_TEST_UPDATE=1"
+  case "${SIGN_IDENTITY:-}" in "Developer ID Application:"*) refuse "not with a Developer ID" ;; esac
+  if [ -z "$test_feed" ] || [ -z "$test_key" ]; then
+    refuse "set both TONEARM_TEST_FEED_URL and TONEARM_TEST_ED_KEY"
+  fi
+  [[ "$test_feed" =~ ^http://(127\.0\.0\.1|localhost):[0-9]+/ ]] || refuse "the test feed must be on 127.0.0.1 or localhost"
+  [ "$(printf '%s' "$test_key" | base64 --decode 2> /dev/null | wc -c | tr -d ' ')" = 32 ] \
+    || refuse "TONEARM_TEST_ED_KEY is not base64 of 32 bytes"
+fi
 
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 APP=build/Tonearm.app
@@ -48,6 +69,11 @@ if [ -n "${VERSION:-}" ]; then
 fi
 if [ -n "${BUILD:-}" ]; then
   "$plistbuddy" -c "Set :CFBundleVersion $BUILD" "$PLIST"
+fi
+if [ -n "$test_feed" ]; then
+  echo "::warning::test build: SUFeedURL $test_feed, SUPublicEDKey $test_key"
+  plutil -replace SUFeedURL -string "$test_feed" "$PLIST"
+  plutil -replace SUPublicEDKey -string "$test_key" "$PLIST"
 fi
 plutil -lint "$PLIST"
 
