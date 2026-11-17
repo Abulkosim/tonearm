@@ -266,16 +266,24 @@ struct HistoryFiles {
         return found.map { URL(fileURLWithPath: base).appendingPathComponent($0) }
     }
 
+    /// Unpacks with ditto, ignoring resource forks and extended attributes, and with unzip
+    /// if ditto fails (it failed in CI on a zip with a junk __MACOSX/._ entry).
     static func unzip(_ zip: URL, to dir: URL) throws {
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        p.arguments = ["-x", "-k", zip.path, dir.path]
-        p.standardOutput = FileHandle.nullDevice
-        p.standardError = FileHandle.nullDevice
-        do { try p.run() } catch { throw ImportError.unzipFailed(zip.lastPathComponent) }
-        p.waitUntilExit()
-        guard p.terminationStatus == 0 else { throw ImportError.unzipFailed(zip.lastPathComponent) }
+        let tools = [("/usr/bin/ditto", ["-x", "-k", "--norsrc", "--noextattr", "--noacl", zip.path, dir.path]),
+                     ("/usr/bin/unzip", ["-qq", "-o", zip.path, "-d", dir.path])]
+        for (tool, arguments) in tools {
+            try? FileManager.default.removeItem(at: dir)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: tool)
+            p.arguments = arguments
+            p.standardOutput = FileHandle.nullDevice
+            p.standardError = FileHandle.nullDevice
+            guard (try? p.run()) != nil else { continue }
+            p.waitUntilExit()
+            if p.terminationStatus == 0 { return }
+        }
+        throw ImportError.unzipFailed(zip.lastPathComponent)
     }
 
     func cleanUp() {

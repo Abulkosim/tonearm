@@ -163,6 +163,34 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertThrowsError(try s.sync { try $0.importNow(urls: [self.dir.appendingPathComponent("nothing")]) })
     }
 
+    /// Zips made on a Mac carry __MACOSX/._ files; a broken one must not stop the import.
+    func testZipWithJunkMacMetadata() throws {
+        let src = dir.appendingPathComponent("zipsrc")
+        try FileManager.default.createDirectory(at: src.appendingPathComponent("__MACOSX"),
+                                                withIntermediateDirectories: true)
+        try Data(extended.utf8).write(to: src.appendingPathComponent("Streaming_History_Audio_2024_0.json"))
+        try Data([0, 5, 22, 7, 1, 2, 3]).write(to: src.appendingPathComponent("__MACOSX/._Streaming_History_Audio_2024_0.json"))
+        let zip = dir.appendingPathComponent("junk.zip")
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+        p.currentDirectoryURL = src
+        p.arguments = ["-q", "-r", zip.path, "."]
+        try p.run()
+        p.waitUntilExit()
+        XCTAssertEqual(p.terminationStatus, 0)
+        // For the record: what plain ditto makes of it.
+        let ditto = Process()
+        ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        ditto.arguments = ["-x", "-k", zip.path, dir.appendingPathComponent("plain-ditto").path]
+        ditto.standardError = FileHandle.nullDevice
+        try ditto.run()
+        ditto.waitUntilExit()
+        print("history: plain ditto on a zip with a junk ._ entry exits \(ditto.terminationStatus)")
+        let r = try store().sync { try $0.importNow(urls: [zip]) }
+        XCTAssertEqual(r.files, 1)
+        XCTAssertEqual(r.added, 2)
+    }
+
     func testImportReplacesOverlappingLiveListens() throws {
         let s = store()
         let start = Date(timeIntervalSince1970: TimeInterval(ms("2024-03-01T10:00:00Z")) / 1000 + 2)
