@@ -279,13 +279,24 @@ final class HistoryStore: @unchecked Sendable {
     /// counted twice. A live listen matches an imported row of the same kind and song
     /// (same Spotify URI, or same title and artist) whose play overlaps it in time.
     /// Spotify's numbers win: the live row is deleted.
+    ///
+    /// Tonearm can split one play into several live rows: when it quits and starts again
+    /// mid-song, when recording is turned off and on, or when the song is sought back to
+    /// the start. So an imported row takes the live row that overlaps it most, and also
+    /// any other that lies mostly inside it, as long as together they did not play longer
+    /// than Spotify counted. The length check keeps the next play of the same song (repeat
+    /// one) when the export does not have it.
     private struct LiveMatcher {
         struct Live {
             var id: Int64
             var start: Int64
             var end: Int64
+            var ms: Int64
             var claimed = false
         }
+
+        /// How much longer than Spotify's count the live pieces of one play may add up to.
+        static func tolerance(_ ms: Int64) -> Int64 { 5_000 + ms / 20 }
 
         private var rows: [Live] = []
         private var byURI: [String: [Int]] = [:]
@@ -293,13 +304,13 @@ final class HistoryStore: @unchecked Sendable {
 
         init(_ d: SQLiteDB) throws {
             let s = try d.prepare("""
-            SELECT l.id, l.started_at, l.ended_at, t.kind, t.title, t.artist, t.uri
-            FROM listens l JOIN tracks t ON t.id = l.track_id WHERE l.source = 0
+            SELECT l.id, l.started_at, l.ended_at, t.kind, t.title, t.artist, t.uri, l.ms_played
+            FROM listens l JOIN tracks t ON t.id = l.track_id WHERE l.source = 0 ORDER BY l.started_at, l.id
             """)
             s.bind([])
             while try s.step() {
                 let i = rows.count
-                rows.append(Live(id: s.int(0), start: s.int(1), end: s.int(2)))
+                rows.append(Live(id: s.int(0), start: s.int(1), end: s.int(2), ms: s.int(7)))
                 let kind = s.int(3)
                 let uri = s.text(6)
                 if !uri.isEmpty { byURI["\(kind)\u{1F}\(uri)", default: []].append(i) }
@@ -315,12 +326,24 @@ final class HistoryStore: @unchecked Sendable {
             if r.uri.isEmpty || candidates.isEmpty {
                 candidates = byName["\(r.kind.rawValue)\u{1F}\(r.artist)\u{1F}\(r.title)"] ?? []
             }
-            var best: (index: Int, overlap: Int64)?
+            var hits: [(index: Int, overlap: Int64)] = []
             for i in candidates where !rows[i].claimed {
                 let overlap = min(hi, rows[i].end) - max(lo, rows[i].start)
-                if overlap > 0, overlap > (best?.overlap ?? 0) { best = (i, overlap) }
+                if overlap > 0 { hits.append((i, overlap)) }
             }
-            if let best { rows[best.index].claimed = true }
+            // Most overlap first; the earlier row on a tie.
+            hits.sort { $0.overlap != $1.overlap ? $0.overlap > $1.overlap : $0.index < $1.index }
+            guard let best = hits.first else { return }
+            rows[best.index].claimed = true
+            var played = rows[best.index].ms
+            let limit = r.msPlayed + Self.tolerance(r.msPlayed)
+            for hit in hits.dropFirst() {
+                let row = rows[hit.index]
+                let span = max(1, row.end - row.start)
+                guard hit.overlap * 2 >= span, played + row.ms <= limit else { continue }
+                rows[hit.index].claimed = true
+                played += row.ms
+            }
         }
 
         func deleteClaimed(_ d: SQLiteDB) throws -> Int {

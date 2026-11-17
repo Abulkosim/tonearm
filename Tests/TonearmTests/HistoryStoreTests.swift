@@ -214,6 +214,55 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertEqual(stats.music.ms, 260_000, "Spotify's 200 s, not Tonearm's 196 s, plus the other song")
     }
 
+    /// Tonearm quit and started again 70 s into a 240 s song, so it kept two rows for one
+    /// play. Spotify's one row replaces both. The next play of the song, which the export
+    /// does not have, stays.
+    func testImportReplacesEveryPieceOfASplitLiveListen() throws {
+        let s = store()
+        let start = Date(timeIntervalSince1970: TimeInterval(ms("2024-03-01T10:00:00Z")) / 1000)
+        func live(_ from: TimeInterval, _ to: TimeInterval, _ seconds: Int64) -> LiveListen {
+            LiveListen(trackID: "spotify:track:aaa", kind: .music, title: "Звезда", artist: "Кино",
+                       album: "Группа крови", artworkURL: nil, durationMs: 240_000,
+                       startedAt: start.addingTimeInterval(from), endedAt: start.addingTimeInterval(to),
+                       msPlayed: seconds * 1000)
+        }
+        s.save(live(0, 70, 70))
+        s.save(live(100, 240, 140))
+        s.save(live(240, 480, 240))
+        s.flush()
+        try write("Streaming_History_Audio_2024_0.json", """
+        [{"ts": "2024-03-01T10:04:00Z", "ms_played": 240000, "master_metadata_track_name": "Звезда",
+          "master_metadata_album_artist_name": "Кино", "master_metadata_album_album_name": "Группа крови",
+          "spotify_track_uri": "spotify:track:aaa"}]
+        """)
+        let r = try s.sync { try $0.importNow(urls: [dir.appendingPathComponent("export")]) }
+        XCTAssertEqual(r.replacedLive, 2)
+        XCTAssertEqual(try s.sync { try $0.countNow() }, 2)
+        let stats = try s.sync { try $0.statsNow(for: .allTime, timeZone: TimeZone(identifier: "UTC")!) }
+        XCTAssertEqual(stats.music.ms, 480_000, "Spotify's 240 s for the first play, Tonearm's 240 s for the next")
+        XCTAssertEqual(stats.music.listens, 2)
+    }
+
+    /// Repeat one on a short song: an export with only the first play must not take the
+    /// second live play with it.
+    func testImportKeepsTheNextPlayOfTheSameSong() throws {
+        let s = store()
+        let start = Date(timeIntervalSince1970: TimeInterval(ms("2024-03-01T10:00:00Z")) / 1000)
+        for i in 0..<2 {
+            s.save(LiveListen(trackID: "", kind: .music, title: "Short", artist: "A", album: "", artworkURL: nil,
+                              durationMs: 60_000, startedAt: start.addingTimeInterval(Double(i) * 60),
+                              endedAt: start.addingTimeInterval(Double(i + 1) * 60), msPlayed: 60_000))
+        }
+        s.flush()
+        // Account data is to the minute, so this row overlaps both live plays.
+        try write("StreamingHistory_music_0.json", """
+        [{"endTime": "2024-03-01 10:01", "artistName": "A", "trackName": "Short", "msPlayed": 60000}]
+        """)
+        let r = try s.sync { try $0.importNow(urls: [dir.appendingPathComponent("export")]) }
+        XCTAssertEqual(r.replacedLive, 1)
+        XCTAssertEqual(try s.sync { try $0.countNow() }, 2)
+    }
+
     func testLiveListenUpdatesInPlace() throws {
         let s = store()
         let start = Date(timeIntervalSince1970: 1_700_000_000)
