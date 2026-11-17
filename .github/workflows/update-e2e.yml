@@ -13,6 +13,10 @@ on:
       - Package.resolved
       - .github/workflows/update-e2e.yml
   workflow_dispatch:
+    inputs:
+      old_tag:
+        description: Release tag to update from, or none to skip that case. Empty means the newest one.
+        default: ""
   workflow_call:
 
 permissions:
@@ -53,6 +57,9 @@ jobs:
       - name: Update end to end
         env:
           SIGN_IDENTITY: Tonearm Self-Signed
+          # Escape hatch for a tag push when an old release no longer builds on the runner:
+          # gh variable set UPDATE_E2E_OLD_TAG --body none (or a tag). See docs/releasing.md.
+          OLD_TAG: ${{ inputs.old_tag || vars.UPDATE_E2E_OLD_TAG }}
         run: scripts/update-e2e.sh "$RUNNER_TEMP/update-e2e"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

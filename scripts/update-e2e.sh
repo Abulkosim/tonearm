@@ -19,7 +19,8 @@
 # Usage: SIGN_IDENTITY="Tonearm Self-Signed" scripts/update-e2e.sh <work dir>
 # Environment: SIGN_IDENTITY (a codesign identity in the keychain, not ad-hoc),
 #   EXPECT_SIGNING (passed to check-app.sh, default self-signed), OPENSSL (OpenSSL 3),
-#   OLD_TAG (release tag for step 6; default: the newest vX.Y.Z tag on origin below NEW).
+#   OLD_TAG (release tag for step 6; default: the newest vX.Y.Z tag on origin below NEW;
+#   "none" skips step 6, for when an old tag no longer builds on the runner).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -185,6 +186,11 @@ update_from "$work/old/Tonearm.app" this-commit
 
 # 6. OLD from the newest release older than NEW, built with that release's own scripts.
 old_tag="${OLD_TAG:-}"
+if [ "$old_tag" = none ]; then
+  echo "::warning::update-e2e: OLD_TAG=none; skipped the update from the latest release's code"
+  dump_logs > /dev/null
+  exit 0
+fi
 if [ -z "$old_tag" ]; then
   old_tag="$(git ls-remote --tags --refs origin 'v*' | sed 's:.*refs/tags/::' \
     | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V \
@@ -198,6 +204,12 @@ git archive "$old_tag" | tar -x -C "$work/release-src"
 (cd "$work/release-src" && SIGN_IDENTITY="$SIGN_IDENTITY" BUILD=1 scripts/build-app.sh) > "$work/logs/build-$old_tag.log" 2>&1 \
   || { tail -n 60 "$work/logs/build-$old_tag.log"; fail "could not build $old_tag"; }
 release_app="$work/release-src/build/Tonearm.app"
+# Make sure OLD is that release: its version, with the build number forced to 1.
+release_version="$("$plistbuddy" -c 'Print :CFBundleShortVersionString' "$release_app/Contents/Info.plist")"
+release_build="$("$plistbuddy" -c 'Print :CFBundleVersion' "$release_app/Contents/Info.plist")"
+[ "$release_version" = "${old_tag#v}" ] || fail "built $old_tag, but its Info.plist says version $release_version"
+[ "$release_build" = 1 ] || fail "built $old_tag with build $release_build, expected 1"
+say "built $old_tag as $release_version ($release_build)"
 plutil -replace SUFeedURL -string "$feed" "$release_app/Contents/Info.plist"
 plutil -replace SUPublicEDKey -string "$public_key" "$release_app/Contents/Info.plist"
 # Sign the app again the way that release's build-app.sh signs a self-signed app (no runtime).

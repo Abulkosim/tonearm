@@ -264,9 +264,10 @@ jobs:
           retention-days: 14
           compression-level: 0
 
-  # An old build (0.0.1) of this commit installs this version through Sparkle, from a local
-  # feed, with a throwaway certificate and key. Read-only, no secrets. Pull requests run it
-  # through update-e2e.yml instead.
+  # An old build (0.0.1) of this commit, and a build of the previous release tag, install this
+  # version through Sparkle, from a local feed, with a throwaway certificate and key. Read-only,
+  # no secrets. Pull requests run it through update-e2e.yml instead. If the previous tag no
+  # longer builds, the UPDATE_E2E_OLD_TAG variable can skip it (see docs/releasing.md).
   update-e2e:
     name: Update end to end
     needs: prepare
