@@ -15,6 +15,17 @@ struct PlayerView: View {
         var coverNote: String?
         /// Spotify's process is up but has not answered yet.
         var connecting = false
+        /// Tonearm asked Spotify to start and is waiting for it.
+        var launching = false
+        /// Settings shown in the settings panel, so snapshots don't touch the user's own.
+        var settings: AppSettings?
+        var notificationsDenied = false
+        var loginNeedsApproval = false
+        var canCheckForUpdates = true
+        /// Height of the screen area under the menu bar, which limits the window's height.
+        var screenHeight: CGFloat?
+        /// How far the settings are scrolled when they don't fit: 0 is the top, 1 the bottom.
+        var settingsScroll: CGFloat = 0
     }
 
     /// Nil in the app.
@@ -103,37 +114,67 @@ struct PlayerView: View {
 
     private var settingsPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button(action: toggleSettings) {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text("Settings")
-                        .font(.system(size: 13, weight: .bold))
-                }
-                .frame(height: 24)
+            settingsHeader
+                .padding(.horizontal, Self.padding)
+                .padding(.top, Self.settingsHeaderTop)
+            // Scrolls on a screen too short for all of it, instead of running off the bottom.
+            ScrollsWhenTall(maxHeight: windowHeightLimit - Self.settingsHeaderTop - Self.settingsHeaderHeight,
+                            background: PlayerTheme.fallback,
+                            snapshotScroll: preview.map(\.settingsScroll)) {
+                settingsContent
+                    .padding(.horizontal, Self.padding)
+                    .padding(.top, ScrollsWhenTall<EmptyView>.edgeTop)
+                    .padding(.bottom, ScrollsWhenTall<EmptyView>.edgeBottom)
             }
-            .buttonStyle(IconButtonStyle(isActive: true))
-            .help("Back to player (Esc)")
-            .accessibilityLabel("Back to player")
-            .padding(.bottom, 8)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 
+    private static let settingsHeaderTop: CGFloat = 12
+    private static let settingsHeaderHeight: CGFloat = 24
+
+    @ViewBuilder private var settingsContent: some View {
+        if let preview {
+            SettingsView(settings: preview.settings ?? settings,
+                         notificationsDenied: preview.notificationsDenied,
+                         loginNeedsApproval: preview.loginNeedsApproval,
+                         canCheckForUpdates: preview.canCheckForUpdates)
+        } else {
             SettingsView(notificationsDenied: model.notificationsDenied,
                          openNotificationSettings: model.openNotificationSettings)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, Self.padding)
-        .padding(.top, 12)
-        .padding(.bottom, 12)
+    }
+
+    /// The tallest the window can be: the screen below the menu bar and above the Dock,
+    /// less a small gap at the bottom.
+    private var windowHeightLimit: CGFloat {
+        let screen = preview?.screenHeight
+            ?? (model.popoverWindow?.screen ?? NSScreen.main)?.visibleFrame.height
+            ?? 800
+        return screen - 8
+    }
+
+    private var settingsHeader: some View {
+        Button(action: toggleSettings) {
+            HStack(spacing: 4) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Settings")
+                    .font(.system(size: 13, weight: .bold))
+            }
+            .frame(height: 24)
+        }
+        .buttonStyle(IconButtonStyle(isActive: true))
+        .help("Back to player (Esc)")
+        .accessibilityLabel("Back to player")
     }
 
     private var playerHeader: some View {
         HStack(spacing: 8) {
-            Text(headerTitle)
+            FadingLine(Text(headerTitle)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(PlayerTheme.textSecondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 8)
+                .foregroundColor(PlayerTheme.textSecondary), string: headerTitle)
+                .frame(maxWidth: .infinity, alignment: .leading)
             settingsButton
         }
         .frame(height: 24)
@@ -161,6 +202,7 @@ struct PlayerView: View {
 
     /// True while the Spotify process exists, even before it answers Apple Events.
     private var spotifyAppearsRunning: Bool { preview?.connecting ?? model.spotifyRunning }
+    private var isLaunching: Bool { preview?.launching ?? model.isLaunching }
 
     /// Puts the window back to the player, for the next time it opens.
     private func resetForNextOpen() {
@@ -177,7 +219,7 @@ struct PlayerView: View {
         switch status {
         case .ready:
             EmptyView()
-        case .notRunning where model.isLaunching:
+        case .notRunning where isLaunching:
             StatusMessage(
                 symbol: "music.note",
                 title: "Starting Spotify…",
@@ -276,7 +318,7 @@ struct PlayerView: View {
         .animation(PlayerTheme.fade, value: coverKey)
         .overlay(alignment: .topTrailing) {
             if showCoverActions {
-                CoverActions(canCopy: model.trackURL != nil || isSnapshot, note: coverNote,
+                CoverActions(canCopy: model.trackURL != nil, note: coverNote,
                              open: model.showInSpotify, copy: copyLink)
                     .padding(8)
                     .transition(.opacity)
@@ -311,7 +353,7 @@ struct PlayerView: View {
         ZStack(alignment: .leading) {
             VStack(alignment: .leading, spacing: titleSize > 15 ? 4 : 2) {
                 LinkText(
-                    text: model.track?.title ?? "Nothing playing",
+                    text: titleText,
                     font: .system(size: titleSize, weight: .bold),
                     color: .white,
                     enabled: model.track != nil,
@@ -319,11 +361,9 @@ struct PlayerView: View {
                 )
                 // The full title, for one cut short.
                 .help(model.track?.title ?? "")
-                Text(model.track?.artist ?? "Play something in Spotify")
+                FadingLine(Text(artistText)
                     .font(.system(size: artistSize))
-                    .foregroundColor(PlayerTheme.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                    .foregroundColor(PlayerTheme.textSecondary), string: artistText)
                     .help(model.track?.artist ?? "")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -333,6 +373,19 @@ struct PlayerView: View {
         .animation(PlayerTheme.fade, value: trackKey)
         .accessibilityAction(named: Text("Open in Spotify"), model.showInSpotify)
         .accessibilityAction(named: Text("Copy song link"), copyLink)
+    }
+
+    /// Never empty, so the line keeps its height and the layout doesn't jump.
+    private var titleText: String {
+        guard let track = model.track else { return "Nothing playing" }
+        return track.title.isEmpty ? "Untitled" : track.title
+    }
+
+    private var artistText: String {
+        guard let track = model.track else { return "Play something in Spotify" }
+        if !track.artist.isEmpty { return track.artist }
+        // Ads often have no artist. A no-break space keeps the line's height.
+        return track.id.hasPrefix("spotify:ad:") ? "Advertisement" : "\u{00A0}"
     }
 
     // MARK: Compact layout
@@ -417,12 +470,16 @@ struct PlayerView: View {
     private var canSeek: Bool { model.track != nil && (model.track?.duration ?? 0) > 0 }
 
     private func playhead(at date: Date) -> (position: Double, duration: Double) {
+        guard model.track != nil else { return (0, 0) }
         let duration = max(model.track?.duration ?? 0, 0)
-        return (min(model.position(at: date), duration), duration)
+        let position = max(model.position(at: date), 0)
+        // A length of 0 means Spotify didn't say: the elapsed time still counts up.
+        return (duration > 0 ? min(position, duration) : position, duration)
     }
 
     private func remaining(_ shown: Double, _ duration: Double) -> String {
-        duration > 0 ? "-" + PlayerTheme.time(duration - shown) : PlayerTheme.time(0)
+        if duration > 0 { return "-" + PlayerTheme.time(duration - shown) }
+        return model.track == nil ? PlayerTheme.time(0) : "--:--"
     }
 
     private func progressBar(position: Double, duration: Double) -> some View {
