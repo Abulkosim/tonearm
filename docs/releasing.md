@@ -25,13 +25,14 @@ A release that is already published is never replaced; the workflow refuses. To 
 
 ## What the workflow does
 
-- **prepare** (Ubuntu, read-only): runs `scripts/check-release.sh` on the tag. It fails if the tag is not `vX.Y.Z`, if `changelogs/vX.Y.Z.md` or its `CHANGELOG.md` row is missing, or if `Info.plist` has another version or build number. It computes the build number with `scripts/build-number.sh`.
+- **prepare** (Ubuntu, read-only): fails at once if `SPARKLE_ED_PRIVATE_KEY` is not set. Runs `scripts/check-release.sh` on the tag. It fails if the tag is not `vX.Y.Z`, if `changelogs/vX.Y.Z.md` or its `CHANGELOG.md` row is missing, or if `Info.plist` has another version or build number. It computes the build number with `scripts/build-number.sh`.
 - **build** (macos-15, read-only):
   - `scripts/build-app.sh` builds a universal (arm64 and x86_64) app, copies `Sparkle.framework` into `Contents/Frameworks`, writes the version and build number into `Info.plist`, and signs everything inside-out. Only Developer ID builds get the hardened runtime: in ad-hoc and self-signed builds its library validation would stop the app from loading Sparkle, because those signatures have no Team ID.
   - `scripts/package.sh` makes `Tonearm-X.Y.Z.zip`, `Tonearm-X.Y.Z.dmg` (with an Applications link), the same two files as `Tonearm.zip` and `Tonearm.dmg`, and `SHA256SUMS.txt`.
-  - `scripts/check-app.sh` unzips the app and checks the framework layout, the signatures and designated requirement, the Apple Events entitlement, the runtime flag (present only for Developer ID), both architectures, the version, and that the app launches on arm64 and under Rosetta on x86_64.
+  - `scripts/check-app.sh` unzips the app and runs the launch gate on it (see [Release gates](#release-gates)).
   - `scripts/sparkle-tools.sh` downloads Sparkle's `sign_update` for the pinned version and checks its SHA-256. `scripts/appcast.sh` signs the versioned zip and writes `appcast.xml`, then checks the signature with `sign_update --verify` and with OpenSSL against the `SUPublicEDKey` in the built app.
-- **release** (Ubuntu): verifies the checksums, checks the appcast signature again against the `SUPublicEDKey` in the tagged `Info.plist`, records build provenance for every file, and creates the release with `gh release create --latest`. The notes are `changelogs/vX.Y.Z.md` plus an install section that says how the build was signed. This is the only job with write access, and it alone gets the OIDC token and attestation permissions.
+- **update-e2e** (macos-15, read-only, no secrets): `update-e2e.yml` builds the tagged commit twice and checks that the old build installs the new one through Sparkle (see [Release gates](#release-gates)). It runs next to **build**.
+- **release** (Ubuntu), only after **build** and **update-e2e** pass: verifies the checksums, checks the appcast signature again against the `SUPublicEDKey` in the tagged `Info.plist`, records build provenance for every file, and creates the release with `gh release create --latest`. The notes are `changelogs/vX.Y.Z.md` plus an install section that says how the build was signed. This is the only job with write access, and it alone gets the OIDC token and attestation permissions.
 
 Actions are pinned to commit SHAs. Dependabot proposes updates weekly.
 
@@ -54,7 +55,53 @@ gh workflow run release.yml -R Abulkosim/tonearm -f version=0.0.0-test
 
 A dry run builds and uploads the files as a `release-<version>` artifact. It never creates a release. Without `-f sign=true` it signs ad-hoc and signs the appcast with a throwaway key, so every step still runs. With `-f sign=true` it uses the repository secrets, if they exist. Pull requests never get the secrets.
 
-CI also runs on every pull request: an ad-hoc build that is checked and launched, a build signed with a throwaway self-signed certificate that goes through the same import, trust, signing and launch steps as a release, and `scripts/package.sh`.
+CI also runs on every pull request: an ad-hoc build that is checked and launched, a build signed with a throwaway self-signed certificate that goes through the same import, trust, signing and launch steps as a release, and `scripts/package.sh`. A Swift compiler warning fails the build.
+
+## Release gates
+
+v0.3.0 passed CI and then did not start on any real Mac. These checks exist so that does not happen again. Each one says what it proves and what it can't.
+
+### Launch gate: `scripts/check-app.sh`
+
+Runs on every CI build (ad-hoc and self-signed) and on the packaged app in every release run. Before it starts the app, it applies the rules a real Mac applies, by reading the signatures:
+
+- Every Mach-O in the bundle (Tonearm, Sparkle, Autoupdate, Updater) is signed, passes `codesign --verify --strict`, and is signed by the same certificate and Team ID as the app. Its designated requirement is a cdhash for ad-hoc builds, or names the app's certificate (self-signed) or team (Developer ID).
+- Library validation. If an executable has the hardened runtime and not the `com.apple.security.cs.disable-library-validation` entitlement, it must have a Team ID, and every library in the bundle must have the same one. This is the rule v0.3.0 broke: macOS refused Sparkle.framework with "different Team IDs", because a self-signed certificate has no Team ID.
+- The entitlements are exactly `Resources/Tonearm.entitlements`.
+- `Info.plist` equals `Resources/Info.plist` except the version and build. So a release has the real `SUFeedURL` and `SUPublicEDKey`, and the test overrides in `build-app.sh` can't reach it. `SUPublicEDKey` is base64 of 32 bytes; the release job separately checks that `SPARKLE_ED_PRIVATE_KEY` derives it.
+- The minimum macOS is 13.0 in `Info.plist` and in Tonearm's binary, and no Mach-O needs a newer one.
+
+Then it starts the app with `--snapshot` on arm64 and under Rosetta.
+
+`scripts/launch-gate-test.sh` proves the gate works. The self-signed CI job re-signs its build the way v0.3.0 was signed (`--options runtime` with the self-signed certificate) and downloads the published v0.3.0 (pinned by SHA-256). check-app.sh must fail both on library validation, and pass the normal build.
+
+It can't prove: anything macOS checks that is not in this list, like Gatekeeper on a quarantined download, a revoked certificate, or a change in a future macOS. CI runners do not enforce library validation, so the launch at the end proves only that dyld finds Sparkle.
+
+### Live launch
+
+CI opens the ad-hoc and the self-signed build with `open`, the way a user does, and checks the app is still running 10 seconds later. This catches a crash at startup, including in Sparkle's start. On its own it would have passed v0.3.0, because the runner does not enforce library validation.
+
+### Update end to end: `scripts/update-e2e.sh`
+
+Runs in `update-e2e.yml` on pull requests that touch `scripts/`, `Resources/`, `Updater.swift` or the package, and in every release run before publishing. With a throwaway "Tonearm Self-Signed" certificate and an EdDSA key from Sparkle's `generate_keys`, it builds this commit twice: OLD as 0.0.1 (build 1) and NEW as the version in `Info.plist`, both reading a feed on 127.0.0.1. It packages NEW with `package.sh` and `appcast.sh`, serves it with `python3 -m http.server`, installs OLD in a temporary Applications folder and opens it. Nobody clicks anything: Sparkle checks on launch, downloads in the background, and `Updater.swift` installs at once because no Tonearm window is open.
+
+It proves that, with a certificate that has no Team ID: Sparkle finds the item `appcast.sh` writes, downloads the zip `package.sh` makes, accepts its EdDSA signature and the new app's code signature, replaces the app and relaunches it; the new app's `CFBundleVersion` is NEW's, its signature verifies, it passes the launch gate and stays up 10 seconds. It also checks that `build-app.sh` refuses the test feed and key without `TONEARM_TEST_UPDATE=1`.
+
+It can't prove:
+
+- That the version users have installed can update. OLD is built from the same commit, so the updater code that runs is the new one, not v0.3.4's.
+- Anything about the real certificate and key. They are secrets the test never sees. The release job checks that the key matches `SUPublicEDKey`.
+- Anything about GitHub's download: the feed is local HTTP. The daily feed check covers the public feed.
+- Gatekeeper, quarantine, the move to `/Applications`, an admin password prompt, the Spotify permission carrying over, or library validation (the runner does not enforce it; the launch gate does).
+- Developer ID or notarized builds.
+
+### Public feed: `feed.yml`
+
+Every day, `scripts/check-feed.sh` fetches the real `SUFeedURL` and checks that its newest item is the latest GitHub release (version, build number, enclosure), that the zip's EdDSA signature verifies with `SUPublicEDKey` from `Resources/Info.plist`, that the zip and `Tonearm.dmg` match the release's `SHA256SUMS.txt`, that the app in the zip has the same version, feed and key, and that `releases/latest/download/Tonearm.dmg` redirects to the latest release. GitHub emails the repository owner when a scheduled run fails. It expects one item in the feed, as `appcast.sh` writes it.
+
+### Still needs a person
+
+Step 9 of [Cut a release](#cut-a-release): download the DMG on a real Mac (so it is quarantined), open it past Gatekeeper, check that it plays and that macOS asks for the Spotify permission, and on a Mac with the previous version, check that Check for Updates… installs the new one.
 
 ## Updates (Sparkle)
 
@@ -121,7 +168,7 @@ scripts/sparkle-tools.sh /tmp/sparkle
 
 `generate_keys` keeps the key in your login keychain. The workflow passes the key to `sign_update` on standard input, never as an argument, and checks that it matches `SUPublicEDKey` before signing.
 
-Without `SPARKLE_ED_PRIVATE_KEY` a tag still builds and publishes, with a warning, but the release has no `appcast.xml`. `releases/latest/download/appcast.xml` then returns 404 and installed copies see no update. Set the key before tagging.
+Without `SPARKLE_ED_PRIVATE_KEY` a tag push fails before it builds anything. A release without `appcast.xml` would make `releases/latest/download/appcast.xml` return 404, and installed copies would never see another update. Dry runs without the key still sign the appcast with a throwaway key.
 
 ### Add Developer ID secrets
 
@@ -164,7 +211,7 @@ Moving from self-signed to Developer ID changes the designated requirement: macO
 gh workflow run release.yml -R Abulkosim/tonearm -f version=0.0.0-test -f sign=true
 ```
 
-The "Signing mode" step should print `self-signed` (or `notarized`), the "Inspect packaged app" step should end with `app ok: ... Authority=Tonearm Self-Signed`, and the summary should say `Appcast: signed`.
+The "Signing mode" step should print `self-signed` (or `notarized`), the "Inspect packaged app" step should end with `app ok: ... signed by Tonearm Self-Signed`, and the summary should say `Appcast: signed`.
 
 ## Rotating keys
 
