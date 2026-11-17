@@ -485,7 +485,7 @@ final class ListenBrainzSyncTests: XCTestCase {
         XCTAssertEqual(tokens.token, "good")
         XCTAssertEqual(s.connection, .connected)
         XCTAssertEqual(s.saved.userName, "rob")
-        XCTAssertEqual(s.saved.since, ListenBrainzSync.ms(clock.now))
+        XCTAssertEqual(s.saved.live, [.init(from: ListenBrainzSync.ms(clock.now))], "plays are queued from now")
 
         s.disconnect()
         XCTAssertNil(tokens.token)
@@ -557,7 +557,7 @@ final class ListenBrainzSyncTests: XCTestCase {
     func testSendHistoryInBatchesResumesAndSendsEachListenOnce() async throws {
         let store = try historyStore()
         var saved = ListenBrainzSync.Saved(userName: "rob")
-        saved.since = ListenBrainzSync.ms(Date(timeIntervalSince1970: 1_900_000_000))
+        saved.live = [.init(from: ListenBrainzSync.ms(Date(timeIntervalSince1970: 1_900_000_000)))]
         try writeSaved(saved)
 
         // The first batch goes through, then the network drops; sending is turned off after a few tries.
@@ -595,11 +595,11 @@ final class ListenBrainzSyncTests: XCTestCase {
         XCTAssertNil(relaunched.historyProgress)
     }
 
-    func testHistoryStopsAtTheTimeSendingStarted() async throws {
+    func testHistoryLeavesOutWhatWasQueuedLive() async throws {
         let store = try historyStore()
         var saved = ListenBrainzSync.Saved(userName: "rob")
         // 2020-01-01 + 100 * 600 s: the first 100 full plays (and their short neighbours) started before it.
-        saved.since = ListenBrainzSync.ms(Date(timeIntervalSince1970: 1_577_836_800 + 100 * 600))
+        saved.live = [.init(from: ListenBrainzSync.ms(Date(timeIntervalSince1970: 1_577_836_800 + 100 * 600)))]
         try writeSaved(saved)
         let s = sync(source: store)
         await s.sendHistory()
@@ -619,6 +619,95 @@ final class ListenBrainzSyncTests: XCTestCase {
         XCTAssertTrue(try readSaved().pending.isEmpty)
         XCTAssertTrue(try readSaved().recent.isEmpty, "no song names are left in the file")
         XCTAssertTrue(s.hasToken)
+
+        // The song playing during the delete was deleted from the history, so it stays out.
+        on = true
+        clock.onSleep = { [unowned self] in self.on = false }
+        s.heard(listen(start: -320, played: 160))
+        s.heard(listen(start: -320, played: 200))
+        await s.waitUntilIdle()
+        XCTAssertTrue(try readSaved().pending.isEmpty, "the deleted play is not queued again")
+        XCTAssertTrue(try readSaved().recent.isEmpty)
+        // The next song is.
+        on = true
+        s.heard(listen("spotify:track:bbbbbbbbbbbbbbbbbbbbbb", start: clock.now.timeIntervalSince(t0) + 1, played: 150))
+        await s.waitUntilIdle()
+        XCTAssertEqual(try readSaved().pending.count, 1)
+    }
+
+    func testDeleteAllHistoryMakesNoFileForSomeoneWhoNeverConnected() {
+        let s = sync(token: nil)
+        s.deleteQueued()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    func testAReadUnderWayDoesNotBringBackDeletedState() async throws {
+        let source = GatedHistory()
+        let s = sync(source: source)
+        await s.sendHistory()
+        XCTAssertNotNil(s.saved.history)
+        // The worker is waiting on the store for a page when the history is deleted.
+        await source.gate.reached()
+        s.deleteQueued()
+        await source.gate.open()
+        // Let the old read finish.
+        for _ in 0..<100 { await Task.yield() }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertNil(s.saved.history, "the read that was under way wrote nothing back")
+        XCTAssertNil(try readSaved().history)
+        XCTAssertNil(s.problem)
+    }
+
+    func testPlaysWhileSendingWasOffOrTheTokenWasRefusedAreNotLost() async throws {
+        let store = HistoryStore(url: dir.appendingPathComponent("db/history.sqlite"))
+        // Each play is 150 s of a 200 s song, recorded and then seen by the sync as it ends.
+        func play(_ n: Int, at start: TimeInterval) throws -> LiveListen {
+            let l = listen("spotify:track:" + String(format: "%022d", n), start: start, played: 150)
+            clock.now = l.endedAt
+            try store.sync { try $0.saveNow(l) }
+            return l
+        }
+        let early = try play(1, at: -1_000)
+        // Connected now: plays are queued from here.
+        let s = sync(source: store)
+        s.heard(try play(2, at: 100))
+        await s.waitUntilIdle()
+        // Sending off from 300 s to 700 s.
+        clock.now = t0.addingTimeInterval(300)
+        on = false
+        s.switched(false)
+        let whileOff = try play(3, at: 400)
+        s.heard(whileOff)
+        clock.now = t0.addingTimeInterval(700)
+        on = true
+        s.switched(true)
+        s.heard(try play(4, at: 800))
+        await s.waitUntilIdle()
+        XCTAssertEqual(submitted("single").count, 2, "the plays while on went out live")
+
+        // ListenBrainz stops taking the token. Plays wait in the queue.
+        LBStub.reset(fallback: .init(status: 401, body: #"{"code": 401, "error": "Invalid authorization token."}"#))
+        s.heard(try play(5, at: 1_000))
+        await s.waitUntilIdle()
+        XCTAssertEqual(s.connection, .tokenRejected)
+        s.heard(try play(6, at: 1_200))
+        await s.waitUntilIdle()
+        XCTAssertEqual(s.saved.pending.count, 2, "plays made with a refused token wait for a new one")
+
+        // A new token sends them.
+        LBStub.reset([.init(body: #"{"code": 200, "message": "Token valid.", "valid": true, "user_name": "rob"}"#)])
+        await s.connect(token: "new")
+        await s.waitUntilIdle()
+        XCTAssertTrue(s.saved.pending.isEmpty)
+        XCTAssertEqual(s.saved.sent, 4)
+
+        // Send earlier listens: the play from before connecting, and the one made while off.
+        LBStub.reset()
+        await s.sendHistory()
+        await s.waitUntilIdle()
+        let times = submitted("import").flatMap(\.payload).compactMap { $0["listened_at"] as? Int }
+        XCTAssertEqual(times, [early, whileOff].map { Int($0.startedAt.timeIntervalSince1970) })
+        XCTAssertEqual(s.saved.history?.sent, 2)
     }
 
     func testEarlierListensNeedHalfOfAPlayThatRanToTheEnd() async throws {
@@ -682,5 +771,39 @@ final class ListenBrainzSyncTests: XCTestCase {
         var half = once
         half.msPlayed = 105_000
         XCTAssertTrue(ListenBrainzSync.historyCounts(half, lengths: PlayLengths(longest: 210_000, finished: 210_000)))
+    }
+}
+
+/// A history whose pages wait until the test lets them go.
+final class GatedHistory: LBHistorySource {
+    let gate = Gate()
+
+    func summary() async throws -> HistorySummary {
+        HistorySummary(count: 1, first: Date(timeIntervalSince1970: 1_600_000_000), last: nil)
+    }
+
+    func musicPage(after cursor: ListenCursor?, before: Int64, limit: Int) async throws -> [StoredListen] {
+        await gate.wait()
+        return []
+    }
+
+    func longestPlays() async throws -> [Int64: PlayLengths] { [:] }
+}
+
+actor Gate {
+    private var waiting: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        await withCheckedContinuation { waiting = $0 }
+    }
+
+    /// Returns once something waits at the gate.
+    func reached() async {
+        while waiting == nil { await Task.yield() }
+    }
+
+    func open() {
+        waiting?.resume()
+        waiting = nil
     }
 }
