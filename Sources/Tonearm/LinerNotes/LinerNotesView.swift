@@ -536,13 +536,15 @@ struct EmptyHistory: View {
                 .font(LinerType.serif(32))
                 .foregroundColor(p.primary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Tonearm writes down what you play in Spotify. To see the years before Tonearm, import the history Spotify keeps for you.")
+            Text(AppSettings.shared.recordHistory
+                 ? "Tonearm writes down what you play in Spotify. To see the years before Tonearm, import the history Spotify keeps for you."
+                 : "Record listening is off in Settings › History, so Tonearm isn’t writing down what you play. You can still import the history Spotify keeps for you.")
                 .font(.system(size: 14))
                 .foregroundColor(p.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 12)
             VStack(alignment: .leading, spacing: 8) {
-                step(1, "In Spotify, open Account › Privacy › Download your data and ask for your extended streaming history.", p)
+                step(1, "On spotify.com, open Account › Privacy, and under Download your data ask for your extended streaming history.", p)
                 step(2, "Spotify emails you a .zip, in a few days or up to a month. Choose it here.", p)
             }
             .padding(.top, 20)
