@@ -232,8 +232,12 @@ struct HistoryFiles {
     var files: [URL] = []
     private var temporary: [URL] = []
 
+    /// If it throws, every folder it unpacked is already gone: they can hold the rest of
+    /// the user's Spotify data.
     static func collect(_ urls: [URL]) throws -> HistoryFiles {
         var out = HistoryFiles()
+        var done = false
+        defer { if !done { out.cleanUp() } }
         for url in urls {
             var isDir: ObjCBool = false
             guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { continue }
@@ -249,6 +253,7 @@ struct HistoryFiles {
                 out.files.append(url)
             }
         }
+        done = true
         return out
     }
 
@@ -268,7 +273,8 @@ struct HistoryFiles {
 
     /// Unpacks with ditto, ignoring resource forks and extended attributes, and with unzip
     /// if ditto fails. Plain ditto failed in CI with "File exists" on a zip that has both a
-    /// file and a __MACOSX/._ entry for it, which zips made in Finder can have.
+    /// file and a __MACOSX/._ entry for it, which zips made in Finder can have. If neither
+    /// works, `dir` is removed.
     static func unzip(_ zip: URL, to dir: URL) throws {
         let tools = [("/usr/bin/ditto", ["-x", "-k", "--norsrc", "--noextattr", "--noacl", zip.path, dir.path]),
                      ("/usr/bin/unzip", ["-qq", "-o", zip.path, "-d", dir.path])]
@@ -284,6 +290,7 @@ struct HistoryFiles {
             p.waitUntilExit()
             if p.terminationStatus == 0 { return }
         }
+        try? FileManager.default.removeItem(at: dir)
         throw ImportError.unzipFailed(zip.lastPathComponent)
     }
 
