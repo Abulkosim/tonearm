@@ -409,3 +409,35 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertNotEqual(a.dedupKey, d.dedupKey)
     }
 }
+
+/// The reads Settings > History and ListenBrainz use.
+final class HistoryStoreReadTests: XCTestCase {
+    func testStoreSummaryAndMusicPages() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tonearm-sum-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = HistoryStore(url: dir.appendingPathComponent("history.sqlite"))
+        XCTAssertEqual(try store.sync { try $0.summaryNow() }, HistorySummary())
+        let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+        for i in 0..<5 {
+            let id = i == 4 ? "spotify:episode:e" : "spotify:track:t\(i % 2)"
+            try store.sync {
+                try $0.saveNow(LiveListen(trackID: id, kind: ListenKind.of(spotifyID: id), title: "T\(i % 2)",
+                                          artist: "A", album: "B", artworkURL: nil, durationMs: 100_000,
+                                          startedAt: t0.addingTimeInterval(Double(i) * 200),
+                                          endedAt: t0.addingTimeInterval(Double(i) * 200 + 60),
+                                          msPlayed: Int64(60_000 + i * 1_000)))
+            }
+        }
+        let sum = try store.sync { try $0.summaryNow() }
+        XCTAssertEqual(sum.count, 5)
+        XCTAssertEqual(sum.first, t0)
+        XCTAssertEqual(sum.last, t0.addingTimeInterval(800))
+        let all = try store.sync { try $0.musicPageNow(after: nil, before: .max, limit: 10) }
+        XCTAssertEqual(all.count, 4, "music only")
+        let page1 = try store.sync { try $0.musicPageNow(after: nil, before: .max, limit: 3) }
+        let page2 = try store.sync { try $0.musicPageNow(after: page1.last?.cursor, before: .max, limit: 3) }
+        XCTAssertEqual((page1 + page2).map(\.id), all.map(\.id))
+        let longest = try store.sync { try $0.longestPlaysNow() }
+        XCTAssertEqual(Set(longest.values), [62_000, 63_000])
+    }
+}

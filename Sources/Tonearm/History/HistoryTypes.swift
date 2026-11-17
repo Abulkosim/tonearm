@@ -364,3 +364,31 @@ struct Stats: Codable, Equatable {
 
     var isEmpty: Bool { music.ms == 0 && podcasts.ms == 0 && music.listens == 0 && podcasts.listens == 0 }
 }
+
+/// How much history there is. `first` and `last` are start times; nil when it is empty.
+struct HistorySummary: Equatable {
+    var count = 0
+    var first: Date?
+    var last: Date?
+}
+
+/// A place in the listens, oldest first: the start time and row id of the last one read.
+struct ListenCursor: Codable, Equatable {
+    var startedAt: Int64
+    var id: Int64
+}
+
+/// A stored music listen, for sending to ListenBrainz. Times are UTC milliseconds.
+struct StoredListen: Equatable {
+    var id: Int64
+    var startedAt: Int64
+    var msPlayed: Int64
+    var trackID: Int64
+    var title: String
+    var artist: String
+    var album: String
+    var uri: String
+    var durationMs: Int64?
+
+    var cursor: ListenCursor { ListenCursor(startedAt: startedAt, id: id) }
+}
