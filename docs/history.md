@@ -27,6 +27,8 @@ Tonearm asks the Spotify app on your Mac what is playing, the same way it shows 
 
 `~/Library/Application Support/Tonearm/history.sqlite`, an SQLite database. Settings → History → Show in Finder opens the folder.
 
+`Covers` in the same folder holds the covers the player downloaded for songs it recorded, so Liner Notes can show them without going online. Covers for imported plays aren't there: Spotify's export has none, so Liner Notes draws a tile instead.
+
 Once you connect ListenBrainz, `listenbrainz.json` in the same folder holds the listens waiting to be sent. The ListenBrainz token is in your login Keychain, under "Tonearm ListenBrainz token".
 
 ## Import your Spotify history
@@ -51,7 +53,7 @@ In the CSV, text that starts with `=`, `+`, `-` or `@` gets a `'` in front, so E
 
 ## Delete
 
-Settings → History → Delete all history… asks first, with the number of listens, then deletes them all. It also empties the ListenBrainz queue, since that holds song names. Nothing deleted stays on disk: Tonearm overwrites the freed space and clears SQLite's write-ahead log.
+Settings → History → Delete all history… asks first, with the number of listens, then deletes them all, and the kept covers. It also empties the ListenBrainz queue, since that holds song names. Nothing deleted stays on disk: Tonearm overwrites the freed space and clears SQLite's write-ahead log.
 
 Turning off Record listening stops recording at once and keeps what is already there.
 

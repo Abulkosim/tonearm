@@ -34,8 +34,12 @@ final class HistoryStore: @unchecked Sendable {
     private var liveFloor: Int64 = .min
     private var catalogCache: StatsEngine.Catalog?
 
+    /// Covers the player downloaded, beside the database. See `CoverStore`.
+    let covers: CoverStore
+
     init(url: URL) {
         self.url = url
+        covers = CoverStore(directory: url.deletingLastPathComponent().appendingPathComponent("Covers", isDirectory: true))
     }
 
     // MARK: Public API
@@ -605,7 +609,7 @@ final class HistoryStore: @unchecked Sendable {
     /// Deletes every listen and leaves no copy of them on disk. SQLite keeps old pages in
     /// the main file until a vacuum and in history.sqlite-wal until a checkpoint, and it
     /// reuses the WAL rather than shrinking it. So: zero freed pages, rebuild the file, copy
-    /// the WAL back and cut it to zero bytes.
+    /// the WAL back and cut it to zero bytes. Then the kept covers go too.
     func deleteAllNow() throws {
         let d = try db()
         try d.exec("PRAGMA secure_delete = ON")
@@ -619,6 +623,7 @@ final class HistoryStore: @unchecked Sendable {
         guard try d.int("PRAGMA wal_checkpoint(TRUNCATE)") == 0 else {
             throw SQLiteError.step("could not clear history.sqlite-wal; the database is busy")
         }
+        try covers.deleteAllNow()
     }
 }
 

@@ -79,7 +79,7 @@ Tonearm controls Spotify through Apple Events, so macOS asks once. If you clicke
 
 Tonearm has no analytics and no account. It talks to the Spotify app on your Mac through AppleScript and never uses the Spotify Web API.
 
-It makes two kinds of network requests: it downloads the cover image from the URL Spotify reports, and once a day it asks GitHub whether there is a new version. A third only if you turn it on: sending your listens to ListenBrainz.
+It makes two kinds of network requests: it downloads the cover image from the URL Spotify reports, and once a day it asks GitHub whether there is a new version. A third only if you turn it on: sending your listens to ListenBrainz. Liner Notes makes none; it shows only covers the player already downloaded.
 
 Your listening history stays in `~/Library/Application Support/Tonearm`. See [docs/history.md](docs/history.md) for what is in it.
 

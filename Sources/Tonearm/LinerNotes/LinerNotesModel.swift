@@ -203,21 +203,21 @@ final class LinerNotesModel: ObservableObject {
         return SleeveColors(name: topAlbumName)
     }
 
-    /// Fetches covers for what is on screen. The player fetches the same covers from Spotify's
-    /// image server; nothing about the listener is sent.
+    /// Reads the covers on screen from the ones the player kept (`CoverStore`). Never from
+    /// the network: browsing past listening sends nothing anywhere. A cover the player
+    /// never kept stays a drawn tile.
     private func loadImages() {
-        guard !isSnapshot, let s = stats else { return }
+        guard !isSnapshot, let store, let s = stats else { return }
         var urls: [String] = []
         for a in s.music.topArtists { if let u = artwork.artists[a.name] { urls.append(u) } }
         for t in s.music.topTracks { if let u = artwork.songs[t.id] { urls.append(u) } }
         for a in s.music.topAlbums { if let u = artwork.albums[a.id] { urls.append(u) } }
         for u in urls where images[u] == nil && !loadingURLs.contains(u) {
-            guard let url = URL(string: u), url.scheme == "https" else { continue }
             loadingURLs.insert(u)
             Task {
-                let loaded = try? await URLSession.shared.data(from: url)
+                let data = await store.covers.data(for: u)
                 loadingURLs.remove(u)
-                if let data = loaded?.0, let image = NSImage(data: data) { images[u] = image }
+                if let data, let image = NSImage(data: data) { images[u] = image }
             }
         }
     }
