@@ -2,13 +2,17 @@ name: E2E
 
 # Runs Tonearm against a fake Spotify (Tools/FakeSpotify) through real AppleScript, and
 # checks the fake's dictionary against the real Spotify app's. See CONTRIBUTING.md.
+#
+# Pull requests run it when they touch the app, its build, or this test. Pushes to main and
+# a weekly run always do, so a Spotify update that changes its dictionary shows up without
+# a pull request. On pull requests that touch none of those files the two jobs are skipped,
+# which counts as passing, so "E2E with fake Spotify" can be a required check.
 on:
   pull_request:
-    paths:
-      - Sources/**
-      - Tools/**
-      - scripts/e2e.sh
-      - .github/workflows/e2e.yml
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -16,15 +20,49 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:
     shell: bash
 
 jobs:
+  changes:
+    name: E2E needed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.files.outputs.run }}
+    steps:
+      - name: List changed files
+        id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')"
+          echo "$files"
+          pattern='^(Sources/|Tools/|Resources/|Package\.(swift|resolved)$|scripts/(e2e|build-app)\.sh$|\.github/workflows/e2e\.yml$)'
+          if grep -qE "$pattern" <<< "$files"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # If the changes job fails, both jobs below still run rather than skip and pass.
   e2e:
-    name: Fake Spotify end to end
+    name: E2E with fake Spotify
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.run == 'true') }}
     runs-on: macos-15
     timeout-minutes: 30
     steps:
@@ -34,7 +72,7 @@ jobs:
       - name: Build app
         run: scripts/build-app.sh
       - name: Run scenarios
-        run: scripts/e2e.sh
+        run: TONEARM_APP=build/Tonearm.app scripts/e2e.sh
       - name: Summary
         if: always()
         run: |
@@ -53,27 +91,23 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # The real dictionary is read on the runner and never stored or uploaded.
+  # The real dictionary is read on the runner and never stored or uploaded. If the Spotify
+  # cask does not install, the job fails: a green job here means the check ran.
   dictionary:
     name: Fake matches Spotify's dictionary
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.run == 'true') }}
     runs-on: macos-15
     timeout-minutes: 20
+    env:
+      SPOTIFY_CASK: spotify
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Spotify
-        id: install
-        run: |
-          if HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask spotify; then
-            echo "installed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::brew install --cask spotify failed; the dictionary check is skipped"
-            echo "Dictionary check skipped: the Spotify cask did not install." >> "$GITHUB_STEP_SUMMARY"
-            echo "installed=false" >> "$GITHUB_OUTPUT"
-          fi
+        run: HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask "$SPOTIFY_CASK"
       - name: Compare dictionaries
-        if: steps.install.outputs.installed == 'true'
         run: |
           version="$(defaults read /Applications/Spotify.app/Contents/Info.plist CFBundleShortVersionString)"
           echo "Spotify $version"
