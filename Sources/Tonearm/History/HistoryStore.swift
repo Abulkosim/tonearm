@@ -59,6 +59,12 @@ final class HistoryStore: @unchecked Sendable {
         try await onQueueThrowing { try self.countNow() }
     }
 
+    /// Music listens of 30 s or more: what Liner Notes calls plays (`Stats.music.listens`
+    /// for all time).
+    func playCount() async throws -> Int {
+        try await onQueueThrowing { try self.playCountNow() }
+    }
+
     /// Cover URLs Tonearm saw while playing, for Liner Notes. Imports have none.
     func artwork() async throws -> ArtworkIndex {
         try await onQueueThrowing { try self.artworkNow() }
@@ -411,6 +417,14 @@ final class HistoryStore: @unchecked Sendable {
 
     func countNow() throws -> Int {
         Int(try db().int("SELECT COUNT(*) FROM listens") ?? 0)
+    }
+
+    func playCountNow() throws -> Int {
+        // The same rule as StatsEngine: every kind but podcasts (1) is music.
+        Int(try db().int("""
+        SELECT COUNT(*) FROM listens l JOIN tracks t ON t.id = l.track_id
+        WHERE t.kind >= 0 AND t.kind != 1 AND l.ms_played >= ?1
+        """, [.int(StatsEngine.listenThresholdMs)]) ?? 0)
     }
 
     func summaryNow() throws -> HistorySummary {

@@ -35,6 +35,14 @@ final class HistoryStatsTests: XCTestCase {
         try store.sync { try $0.statsNow(for: p, timeZone: tz) }
     }
 
+    func testPlayCountIsAllTimePlays() throws {
+        // The import screen says how many plays it added with this; the page says Plays.
+        let plays = try store.sync { try $0.playCountNow() }
+        XCTAssertEqual(plays, 5, "music of 30 s or more: not the 20 s play, not the podcast")
+        XCTAssertEqual(plays, try stats(.allTime, utc).music.listens)
+        XCTAssertEqual(try store.sync { try $0.countNow() }, 7)
+    }
+
     func testYearInUTC() throws {
         let s = try stats(.year(2024), utc)
         XCTAssertEqual(s.period, "year:2024")
