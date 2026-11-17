@@ -191,6 +191,28 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertEqual(r.added, 2)
     }
 
+    /// A zip that will not unpack leaves no unpacked folder behind, not even those of the
+    /// zips before it in the same pick.
+    func testFailedUnzipLeavesNothingBehind() throws {
+        try write("Streaming_History_Audio_2024_0.json", extended)
+        let good = dir.appendingPathComponent("good.zip")
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        p.arguments = ["-c", "-k", dir.appendingPathComponent("export").path, good.path]
+        try p.run()
+        p.waitUntilExit()
+        XCTAssertEqual(p.terminationStatus, 0)
+        let bad = dir.appendingPathComponent("bad.zip")
+        try Data("not a zip".utf8).write(to: bad)
+        func unpacked() throws -> Set<String> {
+            Set(try FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path)
+                .filter { $0.hasPrefix("tonearm-import-") })
+        }
+        let before = try unpacked()
+        XCTAssertThrowsError(try store().sync { try $0.importNow(urls: [good, bad]) })
+        XCTAssertTrue(try unpacked().isSubset(of: before))
+    }
+
     func testImportReplacesOverlappingLiveListens() throws {
         let s = store()
         let start = Date(timeIntervalSince1970: TimeInterval(ms("2024-03-01T10:00:00Z")) / 1000 + 2)
