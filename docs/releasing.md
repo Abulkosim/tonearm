@@ -83,13 +83,13 @@ CI opens the ad-hoc and the self-signed build with `open`, the way a user does, 
 
 ### Update end to end: `scripts/update-e2e.sh`
 
-Runs in `update-e2e.yml` on pull requests that touch `scripts/`, `Resources/`, `Updater.swift` or the package, and in every release run before publishing. With a throwaway "Tonearm Self-Signed" certificate and an EdDSA key from Sparkle's `generate_keys`, it builds this commit twice: OLD as 0.0.1 (build 1) and NEW as the version in `Info.plist`, both reading a feed on 127.0.0.1. It packages NEW with `package.sh` and `appcast.sh`, serves it with `python3 -m http.server`, installs OLD in a temporary Applications folder and opens it. Nobody clicks anything: Sparkle checks on launch, downloads in the background, and `Updater.swift` installs at once because no Tonearm window is open.
+Runs in `update-e2e.yml` on pull requests that touch `scripts/`, `Resources/`, `Updater.swift` or the package, and in every release run before publishing. With a throwaway "Tonearm Self-Signed" certificate and an EdDSA key from Sparkle's `generate_keys`, it builds this commit twice: OLD as 0.0.1 (build 1) and NEW as the version in `Info.plist`, both reading a feed on 127.0.0.1. It packages NEW with `package.sh` and `appcast.sh`, serves it with `python3 -m http.server`, installs OLD in a temporary Applications folder and opens it. Nobody clicks anything: Sparkle checks on launch, downloads in the background, and `Updater.swift` installs at once because no Tonearm window is open. Then it does the same again with OLD built from the newest release tag below NEW, with that release's own scripts, so the updater code that runs is the one users have. That build gets the test feed and key and build 1 in its `Info.plist`, and is signed again with the throwaway certificate.
 
 It proves that, with a certificate that has no Team ID: Sparkle finds the item `appcast.sh` writes, downloads the zip `package.sh` makes, accepts its EdDSA signature and the new app's code signature, replaces the app and relaunches it; the new app's `CFBundleVersion` is NEW's, its signature verifies, it passes the launch gate and stays up 10 seconds. It also checks that `build-app.sh` refuses the test feed and key without `TONEARM_TEST_UPDATE=1`.
 
 It can't prove:
 
-- That the version users have installed can update. OLD is built from the same commit, so the updater code that runs is the new one, not v0.3.4's.
+- That the exact copy users have installed can update. The release-tag OLD has the same code, but its `Info.plist` and app signature are rebuilt for the test, and it is built on today's runner and Xcode.
 - Anything about the real certificate and key. They are secrets the test never sees. The release job checks that the key matches `SUPublicEDKey`.
 - Anything about GitHub's download: the feed is local HTTP. The daily feed check covers the public feed.
 - Gatekeeper, quarantine, the move to `/Applications`, an admin password prompt, the Spotify permission carrying over, or library validation (the runner does not enforce it; the launch gate does).
