@@ -472,7 +472,8 @@ struct PlayerView: View {
     private func playhead(at date: Date) -> (position: Double, duration: Double) {
         guard model.track != nil else { return (0, 0) }
         let duration = max(model.track?.duration ?? 0, 0)
-        let position = max(model.position(at: date), 0)
+        // A snapshot shows the position it was given, however long rendering takes.
+        let position = max(model.position(at: isSnapshot ? model.positionDate : date), 0)
         // A length of 0 means Spotify didn't say: the elapsed time still counts up.
         return (duration > 0 ? min(position, duration) : position, duration)
     }
