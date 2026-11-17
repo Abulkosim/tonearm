@@ -25,7 +25,11 @@ enum Entry {
         if let i = args.firstIndex(of: "--states"), i + 1 < args.count {
             exit(StateWalk.render(to: URL(fileURLWithPath: args[i + 1])) ? 0 : 1)
         }
-        // Runs once the app's run loop is up. Never reached in --snapshot, --demo or --states runs, or tests.
+        // Runs scenarios against Tools/FakeSpotify and exits. See scripts/e2e.sh.
+        if let i = args.firstIndex(of: "--e2e"), i + 1 < args.count {
+            E2E.run(outputDir: URL(fileURLWithPath: args[i + 1]))
+        }
+        // Runs once the app's run loop is up. Never reached in --snapshot, --demo, --states or --e2e runs, or tests.
         Task { @MainActor in Updater.shared.start() }
         TonearmApp.main()
     }
