@@ -29,6 +29,23 @@ gh run download <run-id> -n snapshots
 
 The README animation, `docs/images/demo.gif`, is rendered the same way. `scripts/make-demo.sh` runs `Tonearm --demo` and joins the frames with [gifski](https://gif.ski). The Demo workflow does this on pull requests that touch `Snapshot.swift` and uploads the GIF as the `demo` artifact. When the player's look changes, download it and commit it.
 
+## State walk
+
+`Tonearm --states <dir>` renders every screen in every state the code has: each Spotify status and permission screen, songs with long, one-letter, right-to-left, Japanese or emoji titles, ads, episodes, local files, no duration, the ends of the progress and volume bars, very light and very dark covers, the compact layout, every part of settings, the welcome window, and the menu bar title on a light and a dark menu bar. It writes one PNG per state, `contact-sheet.png` with all of them captioned, and `report.txt` with their sizes.
+
+A window can't be taller than the screen. The walk measures each window against a small screen, a 13-inch MacBook Air at its Larger Text setting with the Dock at the bottom, and marks one that doesn't fit as CLIPPED. Then the run fails.
+
+CI runs it on every pull request and uploads the result as the `states` artifact:
+
+```sh
+gh run download <run-id> -n states -D states
+open states/contact-sheet.png
+```
+
+To run it on a Mac: `scripts/build-app.sh && build/Tonearm.app/Contents/MacOS/Tonearm --states build/states`.
+
+Run it after every visible change and look at every picture, not only the one you meant to change. Look for text cut off mid-word, overlaps, low contrast, things out of line, right-to-left text on the wrong side, controls that look disabled when they aren't, and empty gaps. When you add a screen or a state, add it to `Sources/Tonearm/StateWalk.swift`.
+
 ## Window sizing logs
 
 The menu bar window is sized by `Views/MenuBarWindowFit.swift`, and CI can't open it. To see what it does on a real Mac, run this and open the window:
