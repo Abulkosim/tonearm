@@ -10,6 +10,12 @@ enum Entry {
             // Liner Notes from a Spotify export, without the app. See HistoryCLI.
             exit(HistoryCLI.run(Array(args.dropFirst())))
         }
+        // Liner Notes window and share card from a Spotify export, for review. See LinerNotesSnapshot.
+        if let i = args.firstIndex(of: "--liner-notes"), i + 1 < args.count {
+            let history = args.firstIndex(of: "--history").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
+            exit(LinerNotesSnapshot.render(to: URL(fileURLWithPath: args[i + 1]),
+                                           history: history.map { URL(fileURLWithPath: $0) }) ? 0 : 1)
+        }
         if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
             let url = URL(fileURLWithPath: args[i + 1])
             Snapshot.render(to: url)

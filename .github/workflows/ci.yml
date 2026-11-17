@@ -50,6 +50,21 @@ jobs:
             --fixture build/history/export --zip build/history/export.zip --work build/history
       - name: Liner Notes speed
         run: python3 scripts/history-twin.py bench --app build/Tonearm.app/Contents/MacOS/Tonearm --work build/history
+      # The Liner Notes window and share card from the fixture: every period, empty, importing,
+      # light and dark. Fails if share card text would be under 4.5:1. See LinerNotesSnapshot.
+      - name: Render Liner Notes
+        run: build/Tonearm.app/Contents/MacOS/Tonearm --liner-notes build/liner-notes --history build/history/export
+      # The real window in the running app, with the fixture as the runner's own history: no
+      # window may open by itself at launch, and --open-liner-notes must open one.
+      - name: Liner Notes window, live
+        run: scripts/liner-notes-live.sh build/Tonearm.app build/history/export build/liner-notes
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: liner-notes
+          path: build/liner-notes/
+          if-no-files-found: error
+          retention-days: 14
       - name: Render snapshots
         run: |
           build/Tonearm.app/Contents/MacOS/Tonearm --snapshot build/snapshots
