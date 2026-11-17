@@ -12,7 +12,8 @@ enum HistoryCLI {
     static func run(_ args: [String]) -> Int32 {
         var inputs: [URL] = []
         var periods: [Period] = []
-        var zones: [TimeZone] = []
+        /// As given: TimeZone(identifier: "UTC") calls itself "GMT".
+        var zones: [(name: String, zone: TimeZone)] = []
         var json = false
         var dbPath: String?
         var exportPath: String?
@@ -36,7 +37,7 @@ enum HistoryCLI {
                 guard let v = value() else { return fail("--tz needs a value") }
                 for part in v.split(separator: ",") {
                     guard let z = TimeZone(identifier: String(part)) else { return fail("unknown time zone \(part)") }
-                    zones.append(z)
+                    zones.append((String(part), z))
                 }
             case "--json":
                 json = true
@@ -51,7 +52,7 @@ enum HistoryCLI {
         }
         guard !inputs.isEmpty else { return fail("--stats needs a path") }
         if periods.isEmpty { periods = [.allTime] }
-        if zones.isEmpty { zones = [.current] }
+        if zones.isEmpty { zones = [(TimeZone.current.identifier, .current)] }
 
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("tonearm-stats-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -79,12 +80,12 @@ enum HistoryCLI {
 
             var all: [String: Stats] = [:]
             var keys: [String] = []
-            for zone in zones {
+            for (name, zone) in zones {
                 for period in periods {
                     started = DispatchTime.now()
                     let stats = try store.sync { try $0.statsNow(for: period, timeZone: zone) }
-                    log("stats \(zone.identifier) \(period): \(ms(since: started)) ms")
-                    let key = "\(zone.identifier) \(period)"
+                    log("stats \(name) \(period): \(ms(since: started)) ms")
+                    let key = "\(name) \(period)"
                     all[key] = stats
                     keys.append(key)
                 }

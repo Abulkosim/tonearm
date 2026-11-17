@@ -391,6 +391,10 @@ def cmd_check(a):
             os.remove(db + suffix)
     csv_path = os.path.join(a.work, "export.csv")
     json_path = os.path.join(a.work, "export.json")
+    # Why Tonearm falls back to unzip: what plain ditto says about this zip.
+    plain = subprocess.run(["/usr/bin/ditto", "-x", "-k", a.zip, os.path.join(a.work, "plain-ditto")],
+                           capture_output=True, text=True)
+    print("plain ditto: exit %d %s" % (plain.returncode, plain.stderr.strip()[:300]))
     out, _, secs = run_tonearm(a.app, ["--stats", a.zip, "--stats", a.fixture, "--period", ",".join(PERIODS),
                                        "--tz", ",".join(ZONES), "--json", "--db", db, "--export", csv_path])
     swift = json.loads(out)
