@@ -6,6 +6,10 @@ enum Entry {
     @MainActor
     static func main() {
         let args = CommandLine.arguments
+        if args.contains("--stats") {
+            // Liner Notes from a Spotify export, without the app. See HistoryCLI.
+            exit(HistoryCLI.run(Array(args.dropFirst())))
+        }
         if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
             let url = URL(fileURLWithPath: args[i + 1])
             Snapshot.render(to: url)

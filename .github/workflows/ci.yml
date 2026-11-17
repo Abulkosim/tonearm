@@ -49,6 +49,15 @@ jobs:
           log show --start "$start" --style compact \
             --predicate 'process == "Tonearm" AND (subsystem BEGINSWITH "org.sparkle-project" OR eventMessage CONTAINS[c] "sparkle")' \
             | tail -n 40 || true
+      # Liner Notes: Tonearm's stats against a slow Python twin on a synthetic Spotify
+      # export, for many periods and time zones, then speed. See scripts/history-twin.py.
+      - name: Liner Notes twin
+        run: |
+          python3 scripts/make-history-fixture.py build/history/export --zip build/history/export.zip
+          python3 scripts/history-twin.py check --app build/Tonearm.app/Contents/MacOS/Tonearm \
+            --fixture build/history/export --zip build/history/export.zip --work build/history
+      - name: Liner Notes speed
+        run: python3 scripts/history-twin.py bench --app build/Tonearm.app/Contents/MacOS/Tonearm --work build/history
       - name: Render snapshots
         run: |
           build/Tonearm.app/Contents/MacOS/Tonearm --snapshot build/snapshots
