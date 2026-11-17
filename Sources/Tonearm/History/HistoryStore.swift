@@ -69,6 +69,23 @@ final class HistoryStore: @unchecked Sendable {
         try await onQueueThrowing { try self.deleteAllNow() }
     }
 
+    /// How many listens there are, and the first and last start time. For settings.
+    func summary() async throws -> HistorySummary {
+        try await onQueueThrowing { try self.summaryNow() }
+    }
+
+    /// Music listens that started before `before` (UTC ms), oldest first, after `cursor`.
+    /// For sending history to ListenBrainz a page at a time.
+    func musicPage(after cursor: ListenCursor?, before: Int64, limit: Int) async throws -> [StoredListen] {
+        try await onQueueThrowing { try self.musicPageNow(after: cursor, before: before, limit: limit) }
+    }
+
+    /// The longest play of each music track, by track id. A stand-in for the length of
+    /// tracks only known from an export, which has no lengths.
+    func longestPlays() async throws -> [Int64: Int64] {
+        try await onQueueThrowing { try self.longestPlaysNow() }
+    }
+
     // MARK: Live recording
 
     /// Stores or updates a listen Tonearm heard. Writes are queued in order. A failed write
@@ -389,6 +406,44 @@ final class HistoryStore: @unchecked Sendable {
 
     func countNow() throws -> Int {
         Int(try db().int("SELECT COUNT(*) FROM listens") ?? 0)
+    }
+
+    func summaryNow() throws -> HistorySummary {
+        let s = try db().prepare("SELECT COUNT(*), MIN(started_at), MAX(started_at) FROM listens")
+        s.bind([])
+        guard try s.step() else { return HistorySummary() }
+        func date(_ ms: Int64?) -> Date? { ms.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000) } }
+        let summary = HistorySummary(count: Int(s.int(0)), first: date(s.optionalInt(1)), last: date(s.optionalInt(2)))
+        while try s.step() {}
+        return summary
+    }
+
+    func musicPageNow(after cursor: ListenCursor?, before: Int64, limit: Int) throws -> [StoredListen] {
+        let s = try db().prepare("""
+        SELECT l.id, l.started_at, l.ms_played, t.id, t.title, t.artist, t.album, t.uri, t.duration_ms
+        FROM listens l JOIN tracks t ON t.id = l.track_id
+        WHERE t.kind = 0 AND l.started_at < ?1 AND (l.started_at > ?2 OR (l.started_at = ?2 AND l.id > ?3))
+        ORDER BY l.started_at, l.id LIMIT ?4
+        """)
+        s.bind([.int(before), .int(cursor?.startedAt ?? .min), .int(cursor?.id ?? .min), .int(Int64(limit))])
+        var rows: [StoredListen] = []
+        while try s.step() {
+            rows.append(StoredListen(id: s.int(0), startedAt: s.int(1), msPlayed: s.int(2), trackID: s.int(3),
+                                     title: s.text(4), artist: s.text(5), album: s.text(6), uri: s.text(7),
+                                     durationMs: s.optionalInt(8)))
+        }
+        return rows
+    }
+
+    func longestPlaysNow() throws -> [Int64: Int64] {
+        let s = try db().prepare("""
+        SELECT l.track_id, MAX(l.ms_played) FROM listens l JOIN tracks t ON t.id = l.track_id
+        WHERE t.kind = 0 GROUP BY l.track_id
+        """)
+        s.bind([])
+        var longest: [Int64: Int64] = [:]
+        while try s.step() { longest[s.int(0)] = s.int(1) }
+        return longest
     }
 
     func yearsNow(timeZone: TimeZone) throws -> [Int] {
