@@ -31,6 +31,7 @@ final class AppSettings: ObservableObject {
         static let globalShortcuts = "globalShortcuts"
         static let notifyOnTrackChange = "notifyOnTrackChange"
         static let recordHistory = "recordHistory"
+        static let listenBrainz = "listenBrainz"
     }
 
     private let defaults: UserDefaults
@@ -70,6 +71,12 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(recordHistory, forKey: Key.recordHistory) }
     }
 
+    /// Sends listens to ListenBrainz. Off by default; needs a token, which is kept in the
+    /// Keychain, not here. See `ListenBrainzSync`.
+    @Published var listenBrainz: Bool {
+        didSet { defaults.set(listenBrainz, forKey: Key.listenBrainz) }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         menuBarStyle = defaults.string(forKey: Key.menuBarStyle).flatMap(MenuBarStyle.init(rawValue:)) ?? .songTitle
@@ -79,6 +86,7 @@ final class AppSettings: ObservableObject {
         globalShortcuts = defaults.bool(forKey: Key.globalShortcuts)
         notifyOnTrackChange = defaults.bool(forKey: Key.notifyOnTrackChange)
         recordHistory = defaults.object(forKey: Key.recordHistory) as? Bool ?? false
+        listenBrainz = defaults.bool(forKey: Key.listenBrainz)
     }
 
     static func clampLength(_ n: Int) -> Int {

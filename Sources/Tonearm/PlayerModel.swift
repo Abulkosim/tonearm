@@ -104,8 +104,11 @@ final class PlayerModel: ObservableObject {
         self.bridge = bridge
         self.settings = settings
         self.live = live
-        recorder = live ? PlayRecorder.live(settings: settings) : nil
+        recorder = live ? PlayRecorder.live(
+            settings: settings, sink: ListenTee(store: HistoryStore.shared, listenBrainz: .shared)) : nil
         guard live else { return }
+        // Sends what was left queued for ListenBrainz last time, if it is on.
+        ListenBrainzSync.shared.start()
 
         bridge.permissionPromptChanged = { [weak self] asking in self?.permissionPromptChanged(asking) }
         observers.append(SpotifyBridge.observeChanges { [weak self] update in
