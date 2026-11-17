@@ -547,11 +547,17 @@ final class HistoryStore: @unchecked Sendable {
         return n
     }
 
+    /// One CSV field. Text that starts like a formula (=, +, -, @, tab or return) gets a
+    /// leading ' so Excel and Numbers show it rather than run it; song titles come from
+    /// Spotify and from imported files, so they can start with anything.
     static func csvField(_ value: Any?) -> String {
         guard let value else { return "" }
-        let s: String
+        var s: String
         if let b = value as? Bool {
             s = b ? "true" : "false"
+        } else if let text = value as? String {
+            s = text
+            if let first = s.unicodeScalars.first, "=+-@\t\r".unicodeScalars.contains(first) { s = "'" + s }
         } else {
             s = "\(value)"
         }

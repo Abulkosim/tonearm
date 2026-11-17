@@ -441,3 +441,17 @@ final class HistoryStoreReadTests: XCTestCase {
         XCTAssertEqual(Set(longest.values), [62_000, 63_000])
     }
 }
+
+final class HistoryExportTests: XCTestCase {
+    func testCSVTextNeverRunsAsAFormula() {
+        XCTAssertEqual(HistoryStore.csvField("=HYPERLINK(\"x\")"), "\"'=HYPERLINK(\"\"x\"\")\"")
+        XCTAssertEqual(HistoryStore.csvField("+44"), "'+44")
+        XCTAssertEqual(HistoryStore.csvField("-ism"), "'-ism")
+        XCTAssertEqual(HistoryStore.csvField("@home"), "'@home")
+        XCTAssertEqual(HistoryStore.csvField("Song, Part 2"), "\"Song, Part 2\"")
+        XCTAssertEqual(HistoryStore.csvField("Mötley Crüe"), "Mötley Crüe")
+        XCTAssertEqual(HistoryStore.csvField(Int64(-5)), "-5", "numbers are left alone")
+        XCTAssertEqual(HistoryStore.csvField(true), "true")
+        XCTAssertEqual(HistoryStore.csvField(nil), "")
+    }
+}
