@@ -50,7 +50,14 @@ struct TonearmApp: App {
                 .environmentObject(launchAtLogin)
         } label: {
             MenuBarLabel(model: model, settings: settings)
+                .background(LinerNotesOpener())
         }
         .menuBarExtraStyle(.window)
+
+        Window("Liner Notes", id: LinerNotesWindow.id) {
+            LinerNotesRoot()
+        }
+        .defaultSize(LinerNotesWindow.defaultSize)
+        .windowResizability(.contentMinSize)
     }
 }

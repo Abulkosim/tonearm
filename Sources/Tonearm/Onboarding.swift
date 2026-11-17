@@ -50,6 +50,7 @@ enum Onboarding {
 
     @MainActor
     static func reopened() {
+        if LinerNotesWindow.bringToFront() { return }
         if let controller, controller.isVisible {
             controller.show()
         } else if StatusItem.isPlayerOpen {
@@ -107,7 +108,7 @@ enum StatusItem {
     static var isPlayerOpen: Bool {
         NSApp.windows.contains { w in
             w.className != "NSStatusBarWindow" && w.identifier != Onboarding.windowID
-                && w.isVisible && w.frame.width > 40
+                && !LinerNotesWindow.owns(w) && w.isVisible && w.frame.width > 40
         }
     }
 

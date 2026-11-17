@@ -253,13 +253,18 @@ final class PlayerModel: ObservableObject {
     /// The MenuBarExtra window is created by SwiftUI itself. That rules out the status
     /// item's window (AppKit), the welcome window (Tonearm) and update windows (Sparkle).
     /// Pure, for tests.
-    nonisolated static func isPopoverWindow(className: String, classBundleID: String?) -> Bool {
-        guard !className.contains("StatusBar") else { return false }
+    nonisolated static func isPopoverWindow(className: String, classBundleID: String?,
+                                            identifier: String? = nil) -> Bool {
+        guard !className.contains("StatusBar"), !LinerNotesWindow.isLinerNotes(identifier: identifier) else {
+            return false
+        }
         return className.contains("MenuBarExtra") || classBundleID == "com.apple.SwiftUI"
     }
 
     private static func isPopoverWindow(_ window: NSWindow) -> Bool {
-        isPopoverWindow(className: window.className, classBundleID: Bundle(for: type(of: window)).bundleIdentifier)
+        !LinerNotesWindow.owns(window)
+            && isPopoverWindow(className: window.className, classBundleID: Bundle(for: type(of: window)).bundleIdentifier,
+                               identifier: window.identifier?.rawValue)
     }
 
     /// Follows key, occlusion and close events of the one popover window; other windows are
