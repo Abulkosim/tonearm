@@ -228,19 +228,19 @@ enum Snapshot {
     }
 
     @MainActor
-    private static func write(_ view: AnyView, to url: URL) {
+    static func write(_ view: AnyView, to url: URL) {
         guard let cg = image(view) else { fail("render failed for \(url.lastPathComponent)") }
         write(cg, to: url)
     }
 
     @MainActor
-    private static func image(_ view: AnyView) -> CGImage? {
+    static func image(_ view: AnyView) -> CGImage? {
         let renderer = ImageRenderer(content: view)
         renderer.scale = 2
         return renderer.cgImage
     }
 
-    private static func write(_ cg: CGImage, to url: URL) {
+    static func write(_ cg: CGImage, to url: URL) {
         guard let png = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:])
         else { fail("cannot encode \(url.lastPathComponent)") }
         do {
@@ -250,14 +250,15 @@ enum Snapshot {
         }
     }
 
-    private static func fail(_ message: String) -> Never {
+    static func fail(_ message: String) -> Never {
         FileHandle.standardError.write("snapshot: \(message)\n".data(using: .utf8)!)
         exit(1)
     }
 
-    /// Sample cover colors: the teal one, and a red one like many real covers.
+    /// Sample cover colors: the teal one, a red one like many real covers, and two for
+    /// contrast checks: a nearly white one and a nearly black one.
     enum SampleCover {
-        case teal, warm
+        case teal, warm, pale, black
     }
 
     /// Abstract sample cover drawn in code: a record with a tonearm resting on it.
@@ -266,11 +267,20 @@ enum Snapshot {
             func color(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ a: CGFloat = 1) -> NSColor {
                 NSColor(srgbRed: r / 255, green: g / 255, blue: b / 255, alpha: a)
             }
+            let disc: NSColor, groove: NSColor, label: NSColor
             switch cover {
             case .teal:
                 NSGradient(starting: color(28, 78, 88), ending: color(12, 36, 44))?.draw(in: rect, angle: -90)
+                (disc, groove, label) = (color(10, 24, 30), color(236, 222, 196, 0.16), color(238, 124, 92))
             case .warm:
                 NSGradient(starting: color(196, 58, 48), ending: color(120, 26, 30))?.draw(in: rect, angle: -90)
+                (disc, groove, label) = (color(10, 24, 30), color(236, 222, 196, 0.16), color(240, 196, 110))
+            case .pale:
+                NSGradient(starting: color(252, 250, 245), ending: color(236, 232, 224))?.draw(in: rect, angle: -90)
+                (disc, groove, label) = (color(226, 222, 214), color(255, 255, 255, 0.6), color(250, 236, 226))
+            case .black:
+                NSGradient(starting: color(14, 14, 14), ending: color(0, 0, 0))?.draw(in: rect, angle: -90)
+                (disc, groove, label) = (color(6, 6, 6), color(255, 255, 255, 0.05), color(28, 28, 28))
             }
 
             let center = NSPoint(x: 260, y: 270)
@@ -278,9 +288,9 @@ enum Snapshot {
                 NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius,
                                             width: radius * 2, height: radius * 2))
             }
-            color(10, 24, 30).setFill()
+            disc.setFill()
             circle(230).fill()
-            color(236, 222, 196, 0.16).setStroke()
+            groove.setStroke()
             var r: CGFloat = 90
             while r < 226 {
                 let groove = circle(r)
@@ -288,9 +298,9 @@ enum Snapshot {
                 groove.stroke()
                 r += 9
             }
-            (cover == .teal ? color(238, 124, 92) : color(240, 196, 110)).setFill()
+            label.setFill()
             circle(70).fill()
-            color(10, 24, 30).setFill()
+            disc.setFill()
             circle(7).fill()
 
             let arm = NSBezierPath()
@@ -300,9 +310,11 @@ enum Snapshot {
             arm.lineWidth = 12
             arm.lineCapStyle = .round
             arm.lineJoinStyle = .round
-            color(236, 222, 196).setStroke()
+            let armColor = cover == .pale ? color(200, 194, 184) : cover == .black ? color(40, 40, 40)
+                : color(236, 222, 196)
+            armColor.setStroke()
             arm.stroke()
-            color(236, 222, 196).setFill()
+            armColor.setFill()
             NSBezierPath(ovalIn: NSRect(x: 516, y: 516, width: 48, height: 48)).fill()
             return true
         }
