@@ -29,10 +29,13 @@ enum LinerNotesSnapshot {
         let store = HistoryStore(url: temp.appendingPathComponent("history.sqlite"))
 
         let imported: ImportResult
+        let importedPlays: Int
         let years: [Int]
         let total: Int
         do {
             imported = try store.sync { try $0.importNow(urls: [history]) }
+            // A fresh database, so every play in it came from this import.
+            importedPlays = try store.sync { try $0.playCountNow() }
             years = try store.sync { try $0.yearsNow(timeZone: tz) }
             total = try store.sync { try $0.countNow() }
         } catch {
@@ -70,6 +73,13 @@ enum LinerNotesSnapshot {
         var report = "Liner Notes snapshots from \(history.lastPathComponent): \(LinerFormat.number(total)) listens, "
             + "years \(years.first ?? 0)-\(last), \(imported.files) files. Time zone UTC.\n\n"
         var failed = false
+        // The import screen and All time must give the same number of plays.
+        let allTimePlays = stats(.allTime).music.listens
+        let playsMatch = importedPlays == allTimePlays
+        if !playsMatch { failed = true }
+        report += "Import screen: \(LinerFormat.number(importedPlays)) plays added; all time: "
+            + "\(LinerFormat.number(allTimePlays)) plays; \(imported.added) entries stored. "
+            + (playsMatch ? "Same plays.\n\n" : "PLAYS DIFFER\n\n")
         func write(_ name: String, _ view: AnyView, dark: Bool, scale: CGFloat = 2) {
             NSApplication.shared.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
             let renderer = ImageRenderer(content: view.environment(\.colorScheme, dark ? .dark : .light))
@@ -96,7 +106,8 @@ enum LinerNotesSnapshot {
             write("empty-\(look)", window(model(.allTime, phase: .empty)), dark: dark)
             write("importing-\(look)", window(model(.allTime, phase: .empty, importState: .running(
                 filesDone: 3, filesTotal: 7, rowsRead: 31_208))), dark: dark)
-            write("imported-\(look)", window(model(year, importState: .finished(imported))), dark: dark)
+            write("imported-\(look)", window(model(year, importState: .finished(imported, plays: importedPlays))),
+                  dark: dark)
             write("nothing-played-\(look)", window(model(.week(LocalDay(year: years[0] - 1, month: 6, day: 3)))),
                   dark: dark)
             let shareModel = model(year)

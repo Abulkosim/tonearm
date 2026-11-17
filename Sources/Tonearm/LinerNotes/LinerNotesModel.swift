@@ -18,7 +18,9 @@ final class LinerNotesModel: ObservableObject {
     enum ImportState: Equatable {
         case idle
         case running(filesDone: Int, filesTotal: Int, rowsRead: Int)
-        case finished(ImportResult)
+        /// `plays`: music listens of 30 s or more the import added, the number the page
+        /// calls plays. `ImportResult.added` also counts skips and podcast episodes.
+        case finished(ImportResult, plays: Int)
         case failed(String)
     }
 
@@ -249,6 +251,7 @@ final class LinerNotesModel: ObservableObject {
         importState = .running(filesDone: 0, filesTotal: 0, rowsRead: 0)
         Task {
             do {
+                let before = try await store.playCount()
                 let result = try await store.import(urls: urls) { p in
                     Task { @MainActor [weak self] in
                         guard let self, case .running = self.importState else { return }
@@ -256,7 +259,8 @@ final class LinerNotesModel: ObservableObject {
                                                     rowsRead: p.rowsRead)
                     }
                 }
-                importState = .finished(result)
+                let plays = try await store.playCount() - before
+                importState = .finished(result, plays: max(0, plays))
                 // Show the latest year the import brought.
                 if let last = result.last {
                     chosePeriod = true
