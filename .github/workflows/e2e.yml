@@ -1,6 +1,7 @@
 name: E2E
 
-# Checks the fake Spotify's dictionary (Tools/FakeSpotify) against the real Spotify app's.
+# Runs Tonearm against a fake Spotify (Tools/FakeSpotify) through real AppleScript, and
+# checks the fake's dictionary against the real Spotify app's. See CONTRIBUTING.md.
 on:
   pull_request:
     paths:
@@ -22,6 +23,36 @@ defaults:
     shell: bash
 
 jobs:
+  e2e:
+    name: Fake Spotify end to end
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build app
+        run: scripts/build-app.sh
+      - name: Run scenarios
+        run: scripts/e2e.sh
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f build/e2e/report/report.txt ]; then
+            {
+              echo '```'
+              grep -E '^(FAIL|==|[0-9]+ checks)' build/e2e/report/report.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: e2e-logs
+          path: build/e2e/report/
+          if-no-files-found: warn
+          retention-days: 14
+
   # The real dictionary is read on the runner and never stored or uploaded.
   dictionary:
     name: Fake matches Spotify's dictionary
