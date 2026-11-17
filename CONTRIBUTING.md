@@ -46,6 +46,20 @@ To run it on a Mac: `scripts/build-app.sh && build/Tonearm.app/Contents/MacOS/To
 
 Run it after every visible change and look at every picture, not only the one you meant to change. Look for text cut off mid-word, overlaps, low contrast, things out of line, right-to-left text on the wrong side, controls that look disabled when they aren't, and empty gaps. When you add a screen or a state, add it to `Sources/Tonearm/StateWalk.swift`.
 
+## End-to-end test
+
+The unit tests only parse replies. The E2E workflow tests the whole path: it runs Tonearm against a fake Spotify, `Tools/FakeSpotify`, a small app with bundle id `com.spotify.client` and its own AppleScript dictionary. Tonearm's own scripts go to it as real Apple Events, and it posts the same `PlaybackStateChanged` notification Spotify does. It logs every command it gets, so the test can check that play, seek, volume and the rest arrive with the right values. The scenarios are in `Sources/Tonearm/E2E.swift`. They include ads, podcasts, long non-Latin titles, Spotify quitting in the middle of a read, and Spotify not running at all.
+
+A second job installs the real Spotify on the runner and checks that every term Tonearm sends has the same four-char code in both dictionaries. If you change a script in `SpotifyBridge.swift`, add any new term to `Tools/FakeSpotify/Spotify.sdef` and to the list in `Tools/FakeSpotify/check-sdef.py`.
+
+Logs are in the `e2e-logs` artifact. To run it on a Mac without Spotify installed:
+
+```sh
+scripts/e2e.sh
+```
+
+macOS asks once whether your terminal may control "Spotify" (on CI the script grants it in the TCC database). Don't run it where the real Spotify is installed: the test refuses to drive anything but the fake.
+
 ## Window sizing logs
 
 The menu bar window is sized by `Views/MenuBarWindowFit.swift`, and CI can't open it. To see what it does on a real Mac, run this and open the window:
