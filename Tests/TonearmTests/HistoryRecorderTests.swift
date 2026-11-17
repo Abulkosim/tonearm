@@ -215,25 +215,70 @@ final class HistoryRecorderTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(Double(sink.saved.last!.msPlayed) / 1000, 120 - PlayRecorder.saveInterval - 2)
         XCTAssertEqual(Set(sink.saved.map(\.dedupKey)).count, 1, "one row, updated in place")
 
+        // Turned off at 125 s: the listen ends there, not at the next look.
         enabled = false
-        rec.observe(track: a, playing: true, position: 130, at: t(130))
-        XCTAssertEqual(Double(sink.saved.last!.msPlayed) / 1000, 130, accuracy: 0.01)
-        XCTAssertEqual(sink.flushes, 1)
+        rec.turnedOff(at: t(125))
+        XCTAssertEqual(Double(sink.saved.last!.msPlayed) / 1000, 125, accuracy: 0.01)
         let count = sink.saved.count
+        rec.observe(track: a, playing: true, position: 130, at: t(130))
         rec.observe(track: a, playing: true, position: 140, at: t(140))
         XCTAssertEqual(sink.saved.count, count, "nothing while off")
+        XCTAssertEqual(sink.flushes, 0, "turning off never waits on the store")
         // Back on: a new listen, with no credit for the time it was off.
         enabled = true
         rec.observe(track: a, playing: true, position: 150, at: t(150))
         rec.observe(track: a, playing: true, position: 160, at: t(160))
-        rec.stop(at: t(160))
+        rec.quit(at: t(160))
         XCTAssertEqual(Double(sink.saved.last!.msPlayed) / 1000, 10, accuracy: 0.01)
+        XCTAssertEqual(sink.flushes, 1)
+    }
+
+    /// When the setting goes off without `turnedOff` (not seen by the app's observer), the
+    /// next look stops recording, credited up to that look.
+    @MainActor
+    func testRecorderStopsAtTheNextLookWhenOffUnseen() {
+        let sink = Sink()
+        var enabled = true
+        let rec = PlayRecorder(sink: sink, isEnabled: { enabled })
+        let a = song(duration: 600)
+        for s in stride(from: 0.0, through: 60, by: 10) {
+            rec.observe(track: a, playing: true, position: s, at: t(s))
+        }
+        enabled = false
+        rec.observe(track: a, playing: true, position: 70, at: t(70))
+        XCTAssertEqual(Double(sink.saved.last!.msPlayed) / 1000, 70, accuracy: 0.01)
+        let count = sink.saved.count
+        rec.observe(track: a, playing: true, position: 80, at: t(80))
+        XCTAssertEqual(sink.saved.count, count)
+    }
+
+    /// The app's recorder stops the moment the setting goes off.
+    @MainActor
+    func testLiveRecorderStopsWhenTheSettingChanges() {
+        let defaults = UserDefaults(suiteName: "tonearm-recorder-\(UUID().uuidString)")!
+        let settings = AppSettings(defaults: defaults)
+        settings.recordHistory = true
+        let sink = Sink()
+        let rec = PlayRecorder.live(settings: settings, sink: sink)
+        let a = song(duration: 600)
+        let now = Date()
+        rec.observe(track: a, playing: true, position: 0, at: now.addingTimeInterval(-20))
+        rec.observe(track: a, playing: true, position: 20, at: now)
+        let before = sink.saved.count
+        settings.recordHistory = false
+        let closed = expectation(description: "listen closed")
+        DispatchQueue.main.async { closed.fulfill() }
+        wait(for: [closed], timeout: 2)
+        XCTAssertEqual(sink.saved.count, before + 1, "the open listen was closed and saved")
+        XCTAssertGreaterThanOrEqual(sink.saved.last!.msPlayed, 20_000)
+        // The recorder owns the subscription; keep it alive to here.
+        withExtendedLifetime(rec) {}
     }
 
     private final class Sink: ListenSink {
         var saved: [LiveListen] = []
         var flushes = 0
         func save(_ listen: LiveListen) { saved.append(listen) }
-        func flush() { flushes += 1 }
+        func flush(timeout: TimeInterval) { flushes += 1 }
     }
 }

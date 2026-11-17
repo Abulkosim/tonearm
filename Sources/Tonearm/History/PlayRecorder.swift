@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 
 /// Turns what the player sees (track, playing or not, position, at a time) into listens.
 /// Pure, for tests: `PlayRecorder` feeds it and stores what it returns.
@@ -117,7 +118,8 @@ struct ListenTracker {
 /// Where recorded listens go. `HistoryStore` in the app, a list in tests.
 protocol ListenSink: AnyObject {
     func save(_ listen: LiveListen)
-    func flush()
+    /// Waits for queued writes, but no longer than `timeout` seconds.
+    func flush(timeout: TimeInterval)
 }
 
 extension HistoryStore: ListenSink {}
@@ -137,33 +139,44 @@ final class PlayRecorder {
     private var lastSavedMs: Int64 = 0
     private var enabled = true
     private var terminateObserver: NSObjectProtocol?
+    private var settingObserver: AnyCancellable?
 
     init(sink: ListenSink, isEnabled: @escaping () -> Bool) {
         self.sink = sink
         self.isEnabled = isEnabled
     }
 
-    /// The app's recorder: stores into `HistoryStore.shared`, and closes the open listen
-    /// when Tonearm quits.
-    static func live(settings: AppSettings) -> PlayRecorder {
-        let recorder = PlayRecorder(sink: HistoryStore.shared, isEnabled: { [weak settings] in
+    /// The app's recorder: stores into `HistoryStore.shared`, stops the moment recording
+    /// is turned off, and closes the open listen when Tonearm quits.
+    static func live(settings: AppSettings, sink: ListenSink = HistoryStore.shared) -> PlayRecorder {
+        let recorder = PlayRecorder(sink: sink, isEnabled: { [weak settings] in
             settings?.recordHistory ?? false
         })
+        recorder.settingObserver = settings.$recordHistory.dropFirst().removeDuplicates()
+            .filter { !$0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak recorder] _ in
+                MainActor.assumeIsolated { recorder?.turnedOff() }
+            }
         recorder.terminateObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
         ) { [weak recorder] _ in
-            MainActor.assumeIsolated { recorder?.stop() }
+            MainActor.assumeIsolated { recorder?.quit() }
         }
         return recorder
     }
 
+    /// Recording was turned off at `now`: keeps what was heard until then, and nothing after.
+    func turnedOff(at now: Date = Date()) {
+        guard enabled else { return }
+        enabled = false
+        stop(at: now)
+    }
+
     func observe(track: Track?, playing: Bool, position: Double, at now: Date = Date()) {
         guard isEnabled() else {
-            // Turned off: keep what was heard so far, then stop.
-            if enabled {
-                enabled = false
-                stop(at: now)
-            }
+            // Off without `turnedOff` being called: stop at this look.
+            turnedOff(at: now)
             return
         }
         enabled = true
@@ -177,11 +190,19 @@ final class PlayRecorder {
         lastSave = now
     }
 
-    /// Closes the open listen and writes everything out. Spotify quit or Tonearm is quitting.
+    /// Closes the open listen. Writes stay queued, so this never waits on an import.
     func stop(at now: Date = Date()) {
         if let listen = tracker.close(at: now) { store(listen) }
-        sink.flush()
     }
+
+    /// Tonearm is quitting: closes the open listen and waits for the write, but at most
+    /// `quitWait`, since an import can hold the store for several seconds.
+    func quit(at now: Date = Date()) {
+        stop(at: now)
+        sink.flush(timeout: Self.quitWait)
+    }
+
+    static let quitWait: TimeInterval = 2
 
     private func store(_ listen: LiveListen) {
         sink.save(listen)
