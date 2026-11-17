@@ -36,4 +36,21 @@ final class MenuBarCutTests: XCTestCase {
         // No spaces, as in Japanese.
         XCTAssertEqual(MenuBarLabel.shorten("千と千尋の神隠しサウンドトラック", to: 8), "千と千尋の神隠…")
     }
+
+    /// A cut in the artist never goes back into the title, so "Title…" always means the
+    /// title was cut.
+    func testCutInTheArtistKeepsTheArtist() {
+        func bar(_ title: String, _ artist: String, _ max: Int) -> String {
+            MenuBarLabel.title(title, artist: artist, showArtist: true, maxLength: max)
+        }
+        XCTAssertEqual(bar("Bohemian Rhapsody", "Queen", 24), "Bohemian Rhapsody · Que…")
+        XCTAssertEqual(bar("Sample Song Title", "Sample Artist", 24), "Sample Song Title · Sam…")
+        XCTAssertEqual(bar("Blinding Lights", "The Weeknd", 24), "Blinding Lights · The…")
+        // No letter of the artist fits: the title alone, not cut.
+        XCTAssertEqual(bar("Sample Song Title", "Sample Artist", 20), "Sample Song Title")
+        XCTAssertEqual(bar("Sample Song Title", "Sample Artist", 17), "Sample Song Title")
+        // Cut in the title: the title ends at a word.
+        XCTAssertEqual(bar("The Unbearable Lightness of Being", "Sample Artist", 24), "The Unbearable…")
+        XCTAssertEqual(bar("Sample Song Title", "Sample Artist", 16), "Sample Song…")
+    }
 }
