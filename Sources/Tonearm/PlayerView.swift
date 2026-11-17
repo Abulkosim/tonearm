@@ -57,6 +57,7 @@ struct PlayerView: View {
     /// Bumped each time the window closes. The panels are rebuilt under a new id, so hover
     /// states that never got their "mouse left" event start fresh on the next open.
     @State private var session = 0
+    @Environment(\.openWindow) private var openWindow
 
     private static let width: CGFloat = 300
     private static let padding: CGFloat = 16
@@ -183,9 +184,26 @@ struct PlayerView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(PlayerTheme.textSecondary), string: headerTitle)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            linerNotesButton
             settingsButton
         }
         .frame(height: 24)
+    }
+
+    private var linerNotesButton: some View {
+        Button(action: openLinerNotes) {
+            Image(systemName: "chart.bar.fill")
+                .font(.system(size: 12))
+                .frame(width: 24, height: 24)
+        }
+        .buttonStyle(IconButtonStyle())
+        .help("Liner Notes (⌘L)")
+        .accessibilityLabel("Liner Notes")
+    }
+
+    private func openLinerNotes() {
+        guard !isSnapshot else { return }
+        LinerNotesWindow.open(openWindow)
     }
 
     private var settingsButton: some View {
@@ -415,7 +433,10 @@ struct PlayerView: View {
                 trackInfo(titleSize: 14, artistSize: 12)
                     .frame(height: Self.compactCoverSize)
 
-                settingsButton
+                VStack(spacing: 4) {
+                    settingsButton
+                    linerNotesButton
+                }
             }
             compactProgress
                 .padding(.top, 12)
@@ -642,6 +663,7 @@ struct PlayerView: View {
         case .shuffle: model.toggleShuffle()
         case .repeating: model.toggleRepeat()
         case .settings: toggleSettings()
+        case .linerNotes: openLinerNotes()
         case .quit: NSApp.terminate(nil)
         }
         return true

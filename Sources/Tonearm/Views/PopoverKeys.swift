@@ -8,6 +8,8 @@ enum KeyCommand: Equatable {
     case volumeUp, volumeDown
     case shuffle, repeating
     case settings
+    /// ⌘L: opens the Liner Notes window.
+    case linerNotes
     /// Escape: leaves settings. Outside settings the key goes on and closes the window.
     case back
     case quit
@@ -54,6 +56,7 @@ enum KeyCommand: Equatable {
             default: break
             }
             if letter(",", 43) { return .settings }
+            if letter("l", 37) { return .linerNotes }
             if letter("q", 12) { return .quit }
         default:
             break
@@ -71,6 +74,7 @@ enum KeyCommand: Equatable {
         ("S", "Shuffle"),
         ("R", "Repeat"),
         ("⌘,", "Settings"),
+        ("⌘L", "Liner Notes"),
     ]
 }
 
