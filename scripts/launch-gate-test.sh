@@ -3,7 +3,10 @@
 # check-app.sh must pass the good build, and fail on library validation for:
 #   1. a copy of the good build re-signed like v0.3.0: the same certificate (no Team ID)
 #      plus --options runtime. Its signatures are still valid, and CI runners still run it.
-#   2. the published v0.3.0, pinned by SHA-256.
+#   2. the published v0.3.0, pinned by SHA-256. If the download fails (the release was
+#      deleted, or GitHub is down), this case is skipped with a warning: case 1 tests the
+#      same rule, and a pull request should not fail on GitHub's downloads. A zip that
+#      downloads but has another hash still fails.
 # It must also fail a copy whose SUFeedURL was changed, as build-app.sh's test overrides do,
 # so a test build can't pass the release job's check.
 # Usage: SIGN_IDENTITY="Tonearm Self-Signed" scripts/launch-gate-test.sh <good Tonearm.app>
@@ -47,11 +50,14 @@ sign --entitlements Resources/Tonearm.entitlements "$app"
 codesign --verify --deep --strict "$app" || fail "the re-signed copy should still have valid signatures"
 expect_rejected "a build signed like v0.3.0" "$app"
 
-curl -fsSL --retry 3 -o "$work/v0.3.0.zip" "$v030_url"
-echo "$v030_sha256  $work/v0.3.0.zip" | shasum -a 256 -c - > /dev/null || fail "Tonearm-0.3.0.zip changed"
-mkdir "$work/v0.3.0"
-ditto -x -k "$work/v0.3.0.zip" "$work/v0.3.0"
-expect_rejected "the published v0.3.0" "$work/v0.3.0/Tonearm.app"
+if curl -fsSL --retry 3 -o "$work/v0.3.0.zip" "$v030_url"; then
+  echo "$v030_sha256  $work/v0.3.0.zip" | shasum -a 256 -c - > /dev/null || fail "Tonearm-0.3.0.zip changed"
+  mkdir "$work/v0.3.0"
+  ditto -x -k "$work/v0.3.0.zip" "$work/v0.3.0"
+  expect_rejected "the published v0.3.0" "$work/v0.3.0/Tonearm.app"
+else
+  echo "::warning::launch-gate-test: could not download $v030_url; skipped the published v0.3.0 case"
+fi
 
 mkdir "$work/feed"
 app="$work/feed/Tonearm.app"
