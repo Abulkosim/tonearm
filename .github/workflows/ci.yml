@@ -115,6 +115,13 @@ jobs:
         run: scripts/build-app.sh
       - name: Check app bundle and launch it
         run: EXPECT_SIGNING=self-signed scripts/check-app.sh build/Tonearm.app
+      # The build users get: start the real app, with Sparkle, and check it is up after 10 s.
+      - name: Live launch
+        run: |
+          open -n build/Tonearm.app
+          sleep 10
+          pgrep -x Tonearm > /dev/null || { echo "::error::Tonearm exited during the live launch"; exit 1; }
+          pkill -x Tonearm || true
       - name: Launch gate rejects the v0.3.0 signing
         env:
           SIGN_IDENTITY: Tonearm Self-Signed
