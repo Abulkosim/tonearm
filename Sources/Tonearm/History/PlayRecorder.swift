@@ -124,10 +124,11 @@ extension HistoryStore: ListenSink {}
 
 /// Records what plays in Spotify into the history, while `AppSettings.recordHistory` is on.
 /// `PlayerModel` calls `observe` whenever it learns something new about playback. The open
-/// listen is saved every `saveInterval`, so a crash loses at most about that much.
+/// listen is saved at most every `saveInterval`, on a look at the player. Tonearm looks at
+/// least every 30 s while Spotify plays, so a crash loses at most about 30 s.
 @MainActor
 final class PlayRecorder {
-    static let saveInterval: TimeInterval = 25
+    static let saveInterval: TimeInterval = 10
 
     private var tracker = ListenTracker()
     private let sink: ListenSink
