@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # Opens the real Liner Notes window in the running app, with a Spotify export as the
-# runner's own history, and checks two things:
-#   1. a plain launch opens no window by itself (SwiftUI may open a Window scene at launch);
-#   2. --open-liner-notes opens one.
-# Screenshots of both go to <out dir>. Window sizes come from CGWindowList, which needs no
-# permission.
+# runner's own history, and checks:
+#   1. a plain launch shows no window, looking every half second for 8 s (SwiftUI may open
+#      a Window scene at launch, and Tonearm closes it);
+#   2. --open-liner-notes opens the Liner Notes window itself: the app logs the window's
+#      number, and that number must be on screen;
+#   3. the player's window tracking would not take any Liner Notes window for its popover,
+#      including one SwiftUI opened at launch. The app logs that per window.
+# Screenshots and the app's logs go to <out dir>. Windows come from CGWindowList, which
+# needs no permission. The app logs with --log-windows (and --open-liner-notes).
 #
 # Like live-launch.sh, it turns Sparkle's automatic checks off for the launches, so a build
 # older than the latest release can't replace itself, and fails if the bundle changed.
@@ -22,12 +26,12 @@ bin="$app/Contents/MacOS/Tonearm"
 db="$HOME/Library/Application Support/Tonearm/history.sqlite"
 fail() { echo "::error::liner-notes-live: $*" >&2; exit 1; }
 fingerprint() { shasum -a 256 < "$bin" | cut -d ' ' -f 1; }
-# Tonearm's windows in the normal layer, as WIDTHxHEIGHT lines.
+# Tonearm's windows in the normal layer, as "NUMBER WIDTHxHEIGHT" lines.
 windows() {
   osascript -l JavaScript -e 'ObjC.import("CoreGraphics");
     const all = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly, 0)));
     all.filter(w => w.kCGWindowOwnerName === "Tonearm" && w.kCGWindowLayer === 0)
-       .map(w => w.kCGWindowBounds.Width + "x" + w.kCGWindowBounds.Height).join("\n")'
+       .map(w => w.kCGWindowNumber + " " + w.kCGWindowBounds.Width + "x" + w.kCGWindowBounds.Height).join("\n")'
 }
 
 mkdir -p "$out"
@@ -42,23 +46,51 @@ trap cleanup EXIT
 
 "$bin" --stats "$export_path" --db "$db" > /dev/null
 
-open -n "$app"
-sleep 8
-plain="$(windows)"
-echo "Windows at a plain launch: ${plain:-none}"
+# 1. A plain launch. --log-windows changes nothing but the log.
+launch_log="$out/live-launch.log"
+: > "$launch_log"
+open -n --stderr "$launch_log" "$app" --args --log-windows
+seen=""
+for _ in $(seq 16); do
+  sleep 0.5
+  now="$(windows)"
+  if [ -n "$now" ]; then seen="$seen$now"$'\n'; fi
+done
+echo "Windows at a plain launch, any time in 8 s: ${seen:-none}"
 screencapture -x "$out/live-launch.png" || echo "::warning::screencapture failed"
 pkill -x Tonearm || true
 sleep 2
+launch_lines="$(grep '^liner-notes-window:' "$launch_log" || true)"
+echo "Liner Notes windows the app saw at a plain launch: ${launch_lines:-none}"
 
-open -n "$app" --args --open-liner-notes
-sleep 10
+# 2. --open-liner-notes.
+window_log="$out/live-window.log"
+: > "$window_log"
+open -n --stderr "$window_log" "$app" --args --open-liner-notes
+opened_line=""
+for _ in $(seq 20); do
+  sleep 0.5
+  opened_line="$(grep '^liner-notes-window: opened ' "$window_log" | tail -n 1 || true)"
+  if [ -n "$opened_line" ]; then break; fi
+done
+sleep 3
 opened="$(windows)"
 echo "Windows with --open-liner-notes: ${opened:-none}"
+echo "The app's line: ${opened_line:-none}"
 screencapture -x "$out/live-window.png" || echo "::warning::screencapture failed"
 pgrep -x Tonearm > /dev/null || fail "Tonearm exited with the Liner Notes window open"
 pkill -x Tonearm || true
 
 [ "$(fingerprint)" = "$before" ] || fail "the bundle changed during the launches"
-[ -z "$plain" ] || fail "a window opened by itself at launch: $plain"
-[ -n "$opened" ] || fail "--open-liner-notes opened no window"
-echo "liner-notes-live: no window at launch; the window opened at $opened"
+[ -z "$seen" ] || fail "a window showed at a plain launch: $seen"
+[ -n "$opened_line" ] || fail "--open-liner-notes: the app never logged the Liner Notes window"
+number="$(sed -E 's/.* number=([0-9]+) .*/\1/' <<< "$opened_line")"
+identifier="$(sed -E 's/.* id=([^ ]+) .*/\1/' <<< "$opened_line")"
+[[ "$identifier" == liner-notes* ]] || fail "the window's identifier is $identifier, not liner-notes-*"
+grep -q "^$number " <<< "$opened" || fail "window $number, which the app opened, is not on screen: $opened"
+all_lines="$(printf '%s\n%s\n' "$launch_lines" "$(grep '^liner-notes-window:' "$window_log")")"
+if grep -q 'popover=yes' <<< "$all_lines"; then
+  fail "the player would take a Liner Notes window for its popover: $all_lines"
+fi
+echo "liner-notes-live: no window at launch; window $number ($identifier) opened at" \
+  "$(grep "^$number " <<< "$opened" | cut -d ' ' -f 2); the player's tracking skips it"

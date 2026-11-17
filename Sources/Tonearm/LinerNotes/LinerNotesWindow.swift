@@ -60,6 +60,7 @@ enum LinerNotesWindow {
         guard w !== window else { return }
         guard requested else {
             // Opened by SwiftUI at launch or by state restoration, not by the user.
+            log("closed a window opened at launch", w)
             DispatchQueue.main.async { w.close() }
             return
         }
@@ -80,6 +81,7 @@ enum LinerNotesWindow {
         }
         Onboarding.activate()
         w.makeKeyAndOrderFront(nil)
+        log("opened", w)
     }
 
     private static func closed() {
@@ -97,6 +99,20 @@ enum LinerNotesWindow {
 
     /// `Tonearm --open-liner-notes` opens the window at launch, for CI to look at.
     static var openAtLaunch: Bool { CommandLine.arguments.contains("--open-liner-notes") }
+
+    /// With `--open-liner-notes` or `--log-windows`, one line on stderr per window this
+    /// code sees: its identifier, its size, and whether the player's window tracking would
+    /// take it for the popover. scripts/liner-notes-live.sh reads these.
+    private static func log(_ event: String, _ w: NSWindow) {
+        guard openAtLaunch || CommandLine.arguments.contains("--log-windows") else { return }
+        let id = w.identifier?.rawValue ?? "none"
+        let popover = PlayerModel.isPopoverWindow(className: w.className,
+                                                  classBundleID: Bundle(for: type(of: w)).bundleIdentifier,
+                                                  identifier: w.identifier?.rawValue)
+        let line = "liner-notes-window: \(event) id=\(id) number=\(w.windowNumber) "
+            + "size=\(Int(w.frame.width))x\(Int(w.frame.height)) popover=\(popover ? "yes" : "no")\n"
+        FileHandle.standardError.write(Data(line.utf8))
+    }
 }
 
 /// The scene's root view.
