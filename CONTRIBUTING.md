@@ -48,9 +48,11 @@ Run it after every visible change and look at every picture, not only the one yo
 
 ## End-to-end test
 
-The unit tests only parse replies. The E2E workflow tests the whole path: it runs Tonearm against a fake Spotify, `Tools/FakeSpotify`, a small app with bundle id `com.spotify.client` and its own AppleScript dictionary. Tonearm's own scripts go to it as real Apple Events, and it posts the same `PlaybackStateChanged` notification Spotify does. It logs every command it gets, so the test can check that play, seek, volume and the rest arrive with the right values. The scenarios are in `Sources/Tonearm/E2E.swift`. They include ads, podcasts, long non-Latin titles, Spotify quitting in the middle of a read, and Spotify not running at all.
+The unit tests only parse replies. The E2E workflow tests the whole path: it runs Tonearm against a fake Spotify, `Tools/FakeSpotify`, a small app with bundle id `com.spotify.client` and its own AppleScript dictionary. Tonearm's own scripts go to it as real Apple Events, and it posts the same `PlaybackStateChanged` notification Spotify does. It logs every command it gets, so the test can check that play, seek, volume and the rest arrive with the right values. The scenarios are in `Sources/Tonearm/E2E.swift`. They include ads, podcasts, long non-Latin titles, Spotify quitting in the middle of a read, and Spotify not running at all. At the end the run checks that the fake got exactly the expected commands, in order, and that at least `E2ERunner.minimumChecks` checks ran. Raise that number when you add checks.
 
-A second job installs the real Spotify on the runner and checks that every term Tonearm sends has the same four-char code in both dictionaries. If you change a script in `SpotifyBridge.swift`, add any new term to `Tools/FakeSpotify/Spotify.sdef` and to the list in `Tools/FakeSpotify/check-sdef.py`.
+A second job installs the real Spotify on the runner and checks that every term Tonearm sends has the same four-char code in both dictionaries. If you change a script in `SpotifyBridge.swift`, add any new term to `Tools/FakeSpotify/Spotify.sdef` and to the list in `Tools/FakeSpotify/check-sdef.py`. If the Spotify cask doesn't install, this job fails rather than skip the check.
+
+Both jobs run on pull requests that touch `Sources/`, `Tools/`, `Resources/`, `Package.swift`, `scripts/build-app.sh` or the test itself, on every push to `main`, and every Monday. They test the ad-hoc build. The Developer ID build's hardened runtime and Apple Events entitlement only get checked by `scripts/check-app.sh` at release.
 
 Logs are in the `e2e-logs` artifact. To run it on a Mac without Spotify installed:
 
@@ -58,7 +60,7 @@ Logs are in the `e2e-logs` artifact. To run it on a Mac without Spotify installe
 scripts/e2e.sh
 ```
 
-macOS asks once whether your terminal may control "Spotify" (on CI the script grants it in the TCC database). Don't run it where the real Spotify is installed: the test refuses to drive anything but the fake.
+It builds the app first; set `TONEARM_APP` to test an app you already built. macOS asks once whether your terminal may control "Spotify" (on CI the script grants it in the TCC database). Quit Spotify and Tonearm first: the script won't start while either runs, and it only ever quits the fake. Don't run it where the real Spotify is installed, since Launch Services may pick either app; Tonearm then refuses to run the scenarios.
 
 ## Window sizing logs
 
