@@ -33,7 +33,7 @@ The README animation, `docs/images/demo.gif`, is rendered the same way. `scripts
 
 `Tonearm --states <dir>` renders every screen in every state the code has: each Spotify status and permission screen, songs with long, one-letter, right-to-left, Japanese or emoji titles, ads, episodes, local files, no duration, the ends of the progress and volume bars, very light and very dark covers, the compact layout, every part of settings, the welcome window, and the menu bar title on a light and a dark menu bar. It writes one PNG per state, `contact-sheet.png` with all of them captioned, and `report.txt` with their sizes.
 
-A window can't be taller than the screen. The walk measures each window against a small screen, a 13-inch MacBook Air at its Larger Text setting with the Dock at the bottom, and marks one that doesn't fit as CLIPPED. Then the run fails.
+A window can't be taller than the screen. The walk measures each window against a small screen, a 13-inch MacBook Air at its Larger Text setting with the Dock at the bottom, and marks one that doesn't fit as CLIPPED. Then the run fails. It also draws each window on an endless screen and reports the full height of its content. Settings scroll when they don't fit; every other window must fit whole. The window and the welcome window are always dark, so their light mode renders must match the dark ones pixel for pixel, or the run fails too.
 
 CI runs it on every pull request and uploads the result as the `states` artifact:
 

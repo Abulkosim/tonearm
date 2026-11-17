@@ -8,24 +8,19 @@ import SwiftUI
 ///
 /// Writes one PNG per state at 2x, `contact-sheet.png` with all of them captioned, and
 /// `report.txt` with each one's size. A state taller than the window the app can give it is
-/// marked CLIPPED, and the run fails. Needs no Spotify and doesn't touch the user's settings.
+/// marked CLIPPED, and the run fails. So does a light mode render that differs from its dark
+/// twin. Needs no Spotify and doesn't touch the user's settings.
 @MainActor
 enum StateWalk {
-    /// Screen height under the menu bar and above the Dock, in points, on the smallest
-    /// screen to design for: a 13-inch MacBook Air at its Larger Text setting (1024 x 640),
-    /// less the menu bar (24) and a Dock at the bottom (56).
-    static let smallScreen: CGFloat = 560
-    /// The same on a 1440 x 900 screen, the default on most MacBooks.
-    static let largeScreen: CGFloat = 820
-    /// The player window's limit on the small screen: `PlayerView` leaves an 8 point gap.
-    private static let popLimit: CGFloat = smallScreen - 8
-
     private struct Shot {
         var name: String
         var caption: String
-        var view: AnyView
+        /// Builds the view when it is rendered, so a playing song's clock starts then.
+        var make: @MainActor () -> AnyView
         /// Tallest the window that shows this can be. Nil for things that are not a window.
         var limit: CGFloat?
+        /// True for a screen that scrolls when it is taller than `limit` (settings).
+        var scrolls = false
         var dark = true
         /// The dark shot this light one should match.
         var twin: String?
@@ -36,11 +31,17 @@ enum StateWalk {
         var file: String
         var image: CGImage
         var size: CGSize
+        /// Height with nothing scrolled away or capped.
+        var fullHeight: CGFloat
         var clipped: Bool
         var sameAsTwin: Bool?
     }
 
-    /// Returns false when a state is clipped.
+    /// While true, `pop` builds the window for a screen with no height limit, so nothing in it
+    /// is capped or scrolls and its size is the content's full size.
+    private static var measuringFullHeight = false
+
+    /// Returns false when a state is clipped or a light render differs from its dark twin.
     static func render(to dir: URL) -> Bool {
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -52,30 +53,51 @@ enum StateWalk {
         var done: [Rendered] = []
         for (i, shot) in allShots().enumerated() {
             NSApplication.shared.appearance = NSAppearance(named: shot.dark ? .darkAqua : .aqua)
-            let view = AnyView(shot.view.environment(\.colorScheme, shot.dark ? .dark : .light))
-            guard let cg = Snapshot.image(view) else { Snapshot.fail("render failed for \(shot.name)") }
+            func draw() -> CGImage {
+                let view = AnyView(shot.make().environment(\.colorScheme, shot.dark ? .dark : .light))
+                guard let cg = Snapshot.image(view) else { Snapshot.fail("render failed for \(shot.name)") }
+                return cg
+            }
+            let cg = draw()
             let file = String(format: "%03d", i + 1) + "-\(shot.name).png"
             Snapshot.write(cg, to: dir.appendingPathComponent(file))
             let size = CGSize(width: CGFloat(cg.width) / 2, height: CGFloat(cg.height) / 2)
-            let clipped = shot.limit.map { size.height > $0 + 0.5 } ?? false
+            // The same window again on an endless screen, for the height of all its content.
+            var fullHeight = size.height
+            if shot.limit != nil {
+                measuringFullHeight = true
+                fullHeight = CGFloat(draw().height) / 2
+                measuringFullHeight = false
+            }
+            // A window taller than its limit runs off the screen. One that doesn't scroll must
+            // fit whole; one that scrolls must stay within the limit.
+            let clipped = shot.limit.map { limit in
+                size.height > limit + 0.5 || (!shot.scrolls && fullHeight > limit + 0.5)
+            } ?? false
             let twin = shot.twin.flatMap { name in done.first { $0.shot.name == name } }
-            done.append(Rendered(shot: shot, file: file, image: cg, size: size, clipped: clipped,
-                                 sameAsTwin: twin.map { samePixels($0.image, cg) }))
+            done.append(Rendered(shot: shot, file: file, image: cg, size: size, fullHeight: fullHeight,
+                                 clipped: clipped, sameAsTwin: twin.map { samePixels($0.image, cg) }))
         }
         NSApplication.shared.appearance = nil
 
-        var report = "Tonearm state walk: \(done.count) states. Small screen \(Int(smallScreen)) pt, "
-            + "large screen \(Int(largeScreen)) pt high.\n\n"
+        var report = "Tonearm state walk: \(done.count) states. Small screen \(Int(WalkScreen.small)) pt, "
+            + "large screen \(Int(WalkScreen.large)) pt high.\n"
+            + "Columns: file, size shown, full height of the content, the window's height limit, result.\n\n"
         for r in done {
             let size = "\(Int(r.size.width))x\(Int(r.size.height.rounded()))"
+            let full = "full \(Int(r.fullHeight.rounded()))"
             let limit = r.shot.limit.map { "max \(Int($0))" } ?? "-"
             var flags = r.clipped ? "CLIPPED" : "ok"
+            if r.fullHeight > r.size.height + 0.5 { flags += ", scrolls" }
             if let same = r.sameAsTwin { flags += same ? ", same as \(r.shot.twin ?? "")" : ", DIFFERS from \(r.shot.twin ?? "")" }
-            report += "\(r.file)  \(size)  \(limit)  \(flags)  \(r.shot.caption)\n"
+            report += "\(r.file)  \(size)  \(full)  \(limit)  \(flags)  \(r.shot.caption)\n"
         }
         let clipped = done.filter(\.clipped)
+        let differs = done.filter { $0.sameAsTwin == false }
         report += clipped.isEmpty ? "\nNothing clipped.\n"
             : "\nCLIPPED: \(clipped.map(\.file).joined(separator: ", "))\n"
+        report += differs.isEmpty ? "Every light render matches its dark twin.\n"
+            : "DIFFERS FROM DARK: \(differs.map(\.file).joined(separator: ", "))\n"
         do {
             try report.write(to: dir.appendingPathComponent("report.txt"), atomically: true, encoding: .utf8)
         } catch {
@@ -85,16 +107,17 @@ enum StateWalk {
 
         guard let sheet = contactSheet(done) else { Snapshot.fail("cannot draw the contact sheet") }
         Snapshot.write(sheet, to: dir.appendingPathComponent("contact-sheet.png"))
-        return clipped.isEmpty
+        return clipped.isEmpty && differs.isEmpty
     }
 
     // MARK: - States
 
     private static func allShots() -> [Shot] {
         var s: [Shot] = []
-        let bigLimit = largeScreen - 8
-        func add(_ name: String, _ caption: String, _ view: AnyView, limit: CGFloat? = popLimit) {
-            s.append(Shot(name: name, caption: caption, view: view, limit: limit))
+        let bigLimit = WalkScreen.large - 8
+        func add(_ name: String, _ caption: String, _ view: @autoclosure @escaping @MainActor () -> AnyView,
+                 limit: CGFloat? = WalkScreen.popLimit, scrolls: Bool = false) {
+            s.append(Shot(name: name, caption: caption, make: view, limit: limit, scrolls: scrolls))
         }
 
         // App status. Each is what the window shows while Spotify is in that state.
@@ -184,27 +207,28 @@ enum StateWalk {
                 pop(playing(Samples.song, cover: cover), layout: .compact))
         }
 
-        // Settings.
+        // Settings. They scroll when they are taller than the window can be.
         add("settings-small-top", "Settings, small screen, top",
-            pop(playing(Samples.song)) { $0.settingsOpen = true })
+            pop(playing(Samples.song)) { $0.settingsOpen = true }, scrolls: true)
         add("settings-small-bottom", "Settings, small screen, scrolled to the bottom",
             pop(playing(Samples.song)) {
                 $0.settingsOpen = true
                 $0.settingsScroll = 1
-            })
+            }, scrolls: true)
         add("settings-large", "Settings, 1440 x 900 screen",
-            pop(playing(Samples.song), screen: largeScreen) { $0.settingsOpen = true }, limit: bigLimit)
+            pop(playing(Samples.song), screen: WalkScreen.large) { $0.settingsOpen = true },
+            limit: bigLimit, scrolls: true)
         add("settings-icon-only", "Settings: icon only, compact, shortcuts on",
-            pop(playing(Samples.song), screen: largeScreen) {
+            pop(playing(Samples.song), screen: WalkScreen.large) {
                 $0.settingsOpen = true
                 $0.settings = settings { s in
                     s.menuBarStyle = .iconOnly
                     s.layout = .compact
                     s.globalShortcuts = true
                 }
-            }, limit: bigLimit)
+            }, limit: bigLimit, scrolls: true)
         add("settings-every-note", "Settings: notifications blocked, login item needs approval",
-            pop(playing(Samples.song), screen: largeScreen) {
+            pop(playing(Samples.song), screen: WalkScreen.large) {
                 $0.settingsOpen = true
                 $0.notificationsDenied = true
                 $0.loginNeedsApproval = true
@@ -212,7 +236,7 @@ enum StateWalk {
                     s.showArtist = true
                     s.notifyOnTrackChange = true
                 }
-            }, limit: bigLimit)
+            }, limit: bigLimit, scrolls: true)
         add("settings-every-note-small-bottom", "Settings: every note, small screen, bottom",
             pop(playing(Samples.song)) {
                 $0.settingsOpen = true
@@ -220,25 +244,25 @@ enum StateWalk {
                 $0.notificationsDenied = true
                 $0.loginNeedsApproval = true
                 $0.canCheckForUpdates = false
-            })
+            }, scrolls: true)
         add("settings-length-min", "Settings: shortest title length",
             pop(playing(Samples.song)) {
                 $0.settingsOpen = true
                 $0.settings = settings { $0.maxTitleLength = AppSettings.titleLengthRange.lowerBound }
-            })
+            }, scrolls: true)
         add("settings-length-max", "Settings: longest title length",
             pop(playing(Samples.song)) {
                 $0.settingsOpen = true
                 $0.settings = settings { $0.maxTitleLength = AppSettings.titleLengthRange.upperBound }
-            })
+            }, scrolls: true)
         add("settings-not-running", "Settings while Spotify isn't running",
             pop(idle()) {
                 $0.status = .notRunning
                 $0.settingsOpen = true
-            })
+            }, scrolls: true)
 
         // Welcome window.
-        let welcomeLimit = smallScreen - 12
+        let welcomeLimit = WalkScreen.small - 12
         add("welcome", "Welcome window", AnyView(Onboarding.snapshotView(spotifyInstalled: true)), limit: welcomeLimit)
         add("welcome-no-spotify", "Welcome window, Spotify not installed",
             AnyView(Onboarding.snapshotView(spotifyInstalled: false)), limit: welcomeLimit)
@@ -269,21 +293,23 @@ enum StateWalk {
         for dark in [true, false] {
             for (name, caption, model, bar) in bars {
                 let look = dark ? "dark" : "light"
+                let view = menuBar(model, bar, dark: dark)
                 s.append(Shot(name: "menubar-\(look)-\(name)", caption: "Menu bar, \(look): \(caption)",
-                              view: menuBar(model, bar, dark: dark), limit: nil, dark: dark))
+                              make: { view }, limit: nil, dark: dark))
             }
         }
 
-        // Light appearance. The window and welcome are always dark, so these should match their
-        // dark twins pixel for pixel; report.txt says whether they do.
-        // Paused ones, because a playing bar moves a little between two renders.
+        // Light appearance. The window and welcome pin dark mode in SwiftUI, so these must match
+        // their dark twins pixel for pixel, and the run fails if one doesn't. That catches a view
+        // that follows the system's light mode. It can't see what AppKit draws, such as the
+        // window itself, which ImageRenderer doesn't render.
         add("cover-pale-paused", "Cover: pale, paused", pop(playing(Samples.song, state: .paused, cover: .pale)))
         let lightTwins = ["paused", "compact-paused", "nothing-playing", "not-running",
                           "settings-small-top", "cover-pale-paused", "welcome"]
         for name in lightTwins {
             guard let dark = s.first(where: { $0.name == name }) else { continue }
-            s.append(Shot(name: "light-\(name)", caption: "Light mode: \(dark.caption)", view: dark.view,
-                          limit: dark.limit, dark: false, twin: name))
+            s.append(Shot(name: "light-\(name)", caption: "Light mode: \(dark.caption)", make: dark.make,
+                          limit: dark.limit, scrolls: dark.scrolls, dark: false, twin: name))
         }
         return s
     }
@@ -309,11 +335,11 @@ enum StateWalk {
     }
 
     /// The player window, 300 points wide and as tall as it wants to be.
-    private static func pop(_ model: PlayerModel, layout: PlayerLayout = .large, screen: CGFloat = smallScreen,
+    private static func pop(_ model: PlayerModel, layout: PlayerLayout = .large, screen: CGFloat = WalkScreen.small,
                             _ edit: (inout PlayerView.Preview) -> Void = { _ in }) -> AnyView {
         var preview = PlayerView.Preview()
         preview.layout = layout
-        preview.screenHeight = screen
+        preview.screenHeight = measuringFullHeight ? 100_000 : screen
         preview.settings = settings { $0.layout = layout }
         edit(&preview)
         return AnyView(PlayerView(preview: preview).environmentObject(model))
@@ -382,7 +408,12 @@ enum StateWalk {
         let gap: CGFloat = 24
         let captionHeight: CGFloat = 50
         let rows = stride(from: 0, to: cells.count, by: columns).map { Array(cells[$0..<min($0 + columns, cells.count)]) }
-        let rowHeights = rows.map { row in (row.map(\.size.height).max() ?? 0) + captionHeight + gap }
+        // A cell wider than the column is scaled down whole, keeping its proportions.
+        func drawSize(_ cell: Rendered) -> CGSize {
+            let scale = min(1, cellWidth / cell.size.width)
+            return CGSize(width: cell.size.width * scale, height: cell.size.height * scale)
+        }
+        let rowHeights = rows.map { row in (row.map { drawSize($0).height }.max() ?? 0) + captionHeight + gap }
         let width = gap + CGFloat(columns) * (cellWidth + gap)
         let height = gap + rowHeights.reduce(0, +)
 
@@ -421,10 +452,11 @@ enum StateWalk {
         for (row, rowHeight) in zip(rows, rowHeights) {
             for (i, cell) in row.enumerated() {
                 let x = gap + CGFloat(i) * (cellWidth + gap)
-                let rect = NSRect(x: x, y: y, width: min(cell.size.width, cellWidth), height: cell.size.height)
+                let shown = drawSize(cell)
+                let rect = NSRect(x: x, y: y, width: shown.width, height: shown.height)
                 NSImage(cgImage: cell.image, size: cell.size)
                     .draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-                let top = y + cell.size.height + 6
+                let top = y + shown.height + 6
                 let file = (cell.file as NSString).deletingPathExtension
                 NSAttributedString(string: file, attributes: nameStyle)
                     .draw(in: NSRect(x: x, y: top, width: cellWidth, height: 16))
@@ -442,6 +474,19 @@ enum StateWalk {
         }
         return ctx.makeImage()
     }
+}
+
+/// Screen heights the walk measures against, in points. Outside `StateWalk`, which runs on
+/// the main actor, so default arguments can use them.
+private enum WalkScreen {
+    /// Height under the menu bar and above the Dock on the smallest screen to design for: a
+    /// 13-inch MacBook Air at its Larger Text setting (1024 x 640), less the menu bar (24)
+    /// and a Dock at the bottom (56).
+    static let small: CGFloat = 560
+    /// The same on a 1440 x 900 screen, the default on most MacBooks.
+    static let large: CGFloat = 820
+    /// The player window's limit on the small screen: `PlayerView` leaves an 8 point gap.
+    static let popLimit: CGFloat = small - 8
 }
 
 // MARK: - Sample songs
