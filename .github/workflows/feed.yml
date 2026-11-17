@@ -1,0 +1,38 @@
+name: Feed
+
+# Daily: fetch the public update feed and the latest DMG link the way installed copies and
+# new users do, and check them against the latest release. See scripts/check-feed.sh.
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/feed.yml
+      - scripts/check-feed.sh
+      - scripts/verify-appcast.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  feed:
+    name: Public feed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the feed and the download link
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/check-feed.sh Abulkosim/tonearm
