@@ -17,7 +17,11 @@ enum Entry {
             Snapshot.renderDemo(to: URL(fileURLWithPath: args[i + 1]))
             exit(0)
         }
-        // Runs once the app's run loop is up. Never reached in --snapshot or --demo runs, or tests.
+        // Every screen in every state, for review. Fails when one is clipped. See StateWalk.
+        if let i = args.firstIndex(of: "--states"), i + 1 < args.count {
+            exit(StateWalk.render(to: URL(fileURLWithPath: args[i + 1])) ? 0 : 1)
+        }
+        // Runs once the app's run loop is up. Never reached in --snapshot, --demo or --states runs, or tests.
         Task { @MainActor in Updater.shared.start() }
         TonearmApp.main()
     }

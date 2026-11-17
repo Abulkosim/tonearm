@@ -59,6 +59,16 @@ jobs:
           path: build/snapshots/
           if-no-files-found: error
           retention-days: 14
+      # Every screen in every state, plus contact-sheet.png. Fails if a state is clipped.
+      - name: Render every state
+        run: build/Tonearm.app/Contents/MacOS/Tonearm --states build/states
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: states
+          path: build/states/
+          if-no-files-found: error
+          retention-days: 14
       - name: Package
         run: scripts/package.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
