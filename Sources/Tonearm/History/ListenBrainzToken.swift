@@ -14,10 +14,15 @@ final class KeychainTokenStore: LBTokenStore {
     let account: String
     /// Read once, so sending does not ask the Keychain every time.
     private var cached: String??
+    private let copyMatching: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>) -> OSStatus
 
-    init(service: String = "io.github.abulkosim.tonearm.listenbrainz", account: String = "token") {
+    init(service: String = "io.github.abulkosim.tonearm.listenbrainz", account: String = "token",
+         copyMatching: @escaping (CFDictionary, UnsafeMutablePointer<CFTypeRef?>) -> OSStatus = {
+             SecItemCopyMatching($0, $1)
+         }) {
         self.service = service
         self.account = account
+        self.copyMatching = copyMatching
     }
 
     struct KeychainError: Error, CustomStringConvertible {
@@ -39,10 +44,12 @@ final class KeychainTokenStore: LBTokenStore {
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
-        let status = SecItemCopyMatching(q as CFDictionary, &item)
+        let status = copyMatching(q as CFDictionary, &item)
         let token = status == errSecSuccess ? (item as? Data).map { String(decoding: $0, as: UTF8.self) } : nil
-        // Only a clear answer is remembered; a locked Keychain is asked again next time.
-        if status == errSecSuccess || status == errSecItemNotFound { cached = .some(token) }
+        // Every answer is remembered until the token is written or deleted, so a "Deny" is
+        // not asked again on each song. Only a locked Keychain, which shows no prompt, is
+        // asked again next time.
+        if status != errSecInteractionNotAllowed { cached = .some(token) }
         return token
     }
 
