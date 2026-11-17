@@ -40,15 +40,7 @@ jobs:
         run: EXPECT_SIGNING=adhoc scripts/check-app.sh build/Tonearm.app
       # Starts the real app, which starts Sparkle, and checks it is still running after 10 s.
       - name: Live launch
-        run: |
-          start="$(date '+%Y-%m-%d %H:%M:%S')"
-          open -n build/Tonearm.app
-          sleep 10
-          pgrep -x Tonearm > /dev/null || { echo "::error::Tonearm exited during the live launch"; exit 1; }
-          pkill -x Tonearm || true
-          log show --start "$start" --style compact \
-            --predicate 'process == "Tonearm" AND (subsystem BEGINSWITH "org.sparkle-project" OR eventMessage CONTAINS[c] "sparkle")' \
-            | tail -n 40 || true
+        run: scripts/live-launch.sh build/Tonearm.app
       # Liner Notes: Tonearm's stats against a slow Python twin on a synthetic Spotify
       # export, for many periods and time zones, then speed. See scripts/history-twin.py.
       - name: Liner Notes twin
@@ -117,11 +109,7 @@ jobs:
         run: EXPECT_SIGNING=self-signed scripts/check-app.sh build/Tonearm.app
       # The build users get: start the real app, with Sparkle, and check it is up after 10 s.
       - name: Live launch
-        run: |
-          open -n build/Tonearm.app
-          sleep 10
-          pgrep -x Tonearm > /dev/null || { echo "::error::Tonearm exited during the live launch"; exit 1; }
-          pkill -x Tonearm || true
+        run: scripts/live-launch.sh build/Tonearm.app
       - name: Launch gate rejects the v0.3.0 signing
         env:
           SIGN_IDENTITY: Tonearm Self-Signed
