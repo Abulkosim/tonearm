@@ -99,6 +99,9 @@ struct E2ESong {
 @MainActor
 final class E2ERunner {
     static let overallTimeout: TimeInterval = 300
+    /// Checks a full passing run makes, not counting this one. A run that makes fewer fails,
+    /// so deleting a scenario or a check can't pass. Raise it when you add checks.
+    static let minimumChecks = 102
     static let controlNotification = Notification.Name("io.github.abulkosim.tonearm.e2e.control")
 
     /// The fake's state right after a launch. Keep in step with Tools/FakeSpotify/main.swift.
@@ -117,6 +120,8 @@ final class E2ERunner {
     private var failed = 0
     private var updates: [NowPlayingUpdate] = []
     private var observer: AnyObject?
+    /// Every command the scenarios expected the fake to get, in order.
+    private var expectedCommands: [String] = []
 
     init(report: E2EReport) {
         self.report = report
@@ -125,6 +130,7 @@ final class E2ERunner {
     /// Returns the number of failed checks.
     func runAll() async -> Int {
         guard checkFakeOnly() else { return 1 }
+        let start = log.mark()
         let scenarios: [(String, @MainActor () async -> Void)] = [
             ("Spotify not running at start", notRunningAtStart),
             ("launch and first read", launchAndRead),
@@ -144,7 +150,12 @@ final class E2ERunner {
             report.write("== \(name)")
             await scenario()
         }
+        report.step = "end"
+        report.write("== end")
+        await checkAllCommands(since: start)
         await killFake()
+        let ran = passed + failed
+        check(ran >= Self.minimumChecks, "at least \(Self.minimumChecks) checks ran", "\(ran)")
         report.write("\(passed + failed) checks, \(failed) failed")
         return failed
     }
@@ -514,7 +525,18 @@ final class E2ERunner {
         }
     }
 
+    /// The per-command "sent once" checks only see the moment a command arrives. This one
+    /// reads the whole run's log after a pause, so a command repeated later is caught too.
+    private func checkAllCommands(since start: Int) async {
+        await pause(1.5)
+        let names: Set = ["play", "playpause", "next track", "previous track"]
+        let sent = log.events(since: start).filter { names.contains($0) || $0.hasPrefix("set ") }
+        check(sent == expectedCommands, "the fake got exactly the \(expectedCommands.count) expected commands, in order",
+              "got " + sent.joined(separator: " | "))
+    }
+
     private func expectEvent(_ event: String, since mark: Int) async {
+        expectedCommands.append(event)
         guard await waitFor("fake received \"\(event)\"", { self.log.events(since: mark).contains(event) }) else {
             return report.write("   fake log: " + log.events(since: mark).joined(separator: " | "))
         }
