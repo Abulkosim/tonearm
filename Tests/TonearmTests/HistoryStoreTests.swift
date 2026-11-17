@@ -1,0 +1,266 @@
+import XCTest
+@testable import Tonearm
+
+/// Import, dedup, live recording, export and delete, on a temporary database.
+final class HistoryStoreTests: XCTestCase {
+    private var dir: URL!
+
+    override func setUpWithError() throws {
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent("tonearm-tests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    private func store() -> HistoryStore { HistoryStore(url: dir.appendingPathComponent("db/history.sqlite")) }
+
+    @discardableResult
+    private func write(_ name: String, _ json: String) throws -> URL {
+        let url = dir.appendingPathComponent("export").appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(json.utf8).write(to: url)
+        return url
+    }
+
+    private func ms(_ iso: String) -> Int64 { Timestamp.parse(iso)! }
+
+    /// Two extended rows (one song, one episode), one exact duplicate, one row with
+    /// nothing to show, and private fields that must not be kept.
+    private let extended = """
+    [
+     {"ts": "2024-03-01T10:03:20Z", "platform": "OS X 14", "ms_played": 200000, "conn_country": "UZ",
+      "ip_addr": "192.0.2.7", "master_metadata_track_name": "Звезда", "master_metadata_album_artist_name": "Кино",
+      "master_metadata_album_album_name": "Группа крови", "spotify_track_uri": "spotify:track:aaa",
+      "episode_name": null, "episode_show_name": null, "spotify_episode_uri": null, "reason_start": "clickrow",
+      "reason_end": "trackdone", "shuffle": false, "skipped": false, "offline": false, "offline_timestamp": null,
+      "incognito_mode": false},
+     {"ts": "2024-03-01T10:03:20Z", "platform": "OS X 14", "ms_played": 200000, "conn_country": "UZ",
+      "ip_addr": "192.0.2.7", "master_metadata_track_name": "Звезда", "master_metadata_album_artist_name": "Кино",
+      "master_metadata_album_album_name": "Группа крови", "spotify_track_uri": "spotify:track:aaa",
+      "episode_name": null, "episode_show_name": null, "spotify_episode_uri": null, "reason_start": "clickrow",
+      "reason_end": "trackdone", "shuffle": false, "skipped": false, "offline": false, "offline_timestamp": null,
+      "incognito_mode": false},
+     {"ts": "2024-03-02T08:00:00Z", "ms_played": 1500000, "ip_addr": "192.0.2.8",
+      "master_metadata_track_name": null, "master_metadata_album_artist_name": null,
+      "master_metadata_album_album_name": null, "spotify_track_uri": null, "episode_name": "Ep 1",
+      "episode_show_name": "Show", "spotify_episode_uri": "spotify:episode:eee", "skipped": null},
+     {"ts": "2024-03-02T09:00:00Z", "ms_played": 5000, "master_metadata_track_name": null,
+      "spotify_track_uri": null, "episode_name": null, "spotify_episode_uri": null,
+      "audiobook_title": "A Book"}
+    ]
+    """
+
+    func testImportsExtendedHistoryOnceAndKeepsNoPrivateFields() throws {
+        try write("Spotify Extended Streaming History/Streaming_History_Audio_2024_0.json", extended)
+        let s = store()
+        let first = try s.sync { try $0.importNow(urls: [dir.appendingPathComponent("export")]) }
+        XCTAssertEqual(first.files, 1)
+        XCTAssertEqual(first.rows, 4)
+        XCTAssertEqual(first.added, 2)
+        XCTAssertEqual(first.duplicates, 1)
+        XCTAssertEqual(first.skipped, 1)
+        XCTAssertEqual(first.first, Date(timeIntervalSince1970: TimeInterval(ms("2024-03-01T10:00:00Z")) / 1000))
+
+        let again = try s.sync { try $0.importNow(urls: [dir.appendingPathComponent("export")]) }
+        XCTAssertEqual(again.added, 0)
+        XCTAssertEqual(again.duplicates, 3)
+        XCTAssertEqual(try s.sync { try $0.countNow() }, 2)
+
+        let csv = dir.appendingPathComponent("out.csv"), json = dir.appendingPathComponent("out.json")
+        XCTAssertEqual(try s.sync { try $0.exportNow(to: csv, format: .csv) }, 2)
+        XCTAssertEqual(try s.sync { try $0.exportNow(to: json, format: .json) }, 2)
+        let csvText = try String(contentsOf: csv, encoding: .utf8)
+        XCTAssertTrue(csvText.hasPrefix(HistoryStore.exportColumns.joined(separator: ",") + "\n"))
+        XCTAssertTrue(csvText.contains("Группа крови"))
+        let rows = try JSONSerialization.jsonObject(with: Data(contentsOf: json)) as? [[String: Any]]
+        XCTAssertEqual(rows?.count, 2)
+        XCTAssertEqual(rows?.first?["title"] as? String, "Звезда")
+        XCTAssertEqual(rows?.first?["kind"] as? String, "music")
+        XCTAssertEqual(rows?.first?["reason_start"] as? String, "clickrow")
+        XCTAssertEqual(rows?.last?["kind"] as? String, "podcast")
+        s.flush()
+        var files = [csv, json, s.url]
+        let wal = URL(fileURLWithPath: s.url.path + "-wal")
+        if FileManager.default.fileExists(atPath: wal.path) { files.append(wal) }
+        for blob in try files.map({ try Data(contentsOf: $0) }) {
+            XCTAssertNil(blob.range(of: Data("192.0.2.".utf8)))
+            XCTAssertNil(blob.range(of: Data("OS X 14".utf8)))
+        }
+    }
+
+    func testSchema() throws {
+        let s = store()
+        XCTAssertEqual(try s.sync { try $0.countNow() }, 0)
+        let db = try SQLiteDB(path: s.url.path)
+        XCTAssertEqual(try db.int("PRAGMA user_version"), HistoryStore.schemaVersion)
+        let mode = try db.prepare("PRAGMA journal_mode")
+        mode.bind([])
+        XCTAssertTrue(try mode.step())
+        XCTAssertEqual(mode.text(0), "wal")
+        let columns = try db.prepare("SELECT name FROM pragma_table_info('listens') UNION ALL SELECT name FROM pragma_table_info('tracks')")
+        columns.bind([])
+        var names: [String] = []
+        while try columns.step() { names.append(columns.text(0)) }
+        XCTAssertTrue(names.contains("started_at"))
+        for banned in ["ip_addr", "conn_country", "platform", "username", "user_agent_decrypted"] {
+            XCTAssertFalse(names.contains(banned), banned)
+        }
+    }
+
+    func testAccountDataAndExtendedHistoryOfTheSamePlaysCountOnce() throws {
+        // Account data has the end time to the minute and no album; extended history wins.
+        let account = """
+        [{"endTime": "2024-03-01 10:03", "artistName": "Кино", "trackName": "Звезда", "msPlayed": 200000},
+         {"endTime": "2024-03-01 11:00", "artistName": "Кино", "trackName": "Звезда", "msPlayed": 200000}]
+        """
+        try write("Spotify Account Data/StreamingHistory_music_0.json", account)
+        try write("Spotify Account Data/StreamingHistory_podcast_0.json", """
+        [{"endTime": "2024-03-02 08:00", "podcastName": "Show", "episodeName": "Ep 1", "msPlayed": 1500000}]
+        """)
+        let s = store()
+        let a = try s.sync { try $0.importNow(urls: [dir.appendingPathComponent("export")]) }
+        XCTAssertEqual(a.added, 3)
+        try write("Spotify Extended Streaming History/Streaming_History_Audio_2024_0.json", extended)
+        let both = try s.sync { try $0.importNow(urls: [dir.appendingPathComponent("export")]) }
+        XCTAssertEqual(both.added, 0, "the extended rows replace the account rows in place")
+        XCTAssertEqual(try s.sync { try $0.countNow() }, 3)
+        let stats = try s.sync { try $0.statsNow(for: .allTime, timeZone: TimeZone(identifier: "UTC")!) }
+        XCTAssertEqual(stats.music.ms, 400_000)
+        XCTAssertEqual(stats.music.topAlbums.map(\.name), ["Группа крови"])
+        XCTAssertEqual(stats.podcasts.ms, 1_500_000)
+
+        // The other order gives the same result.
+        let other = HistoryStore(url: dir.appendingPathComponent("db2/history.sqlite"))
+        let ext = dir.appendingPathComponent("export/Spotify Extended Streaming History")
+        _ = try other.sync { try $0.importNow(urls: [ext]) }
+        _ = try other.sync { try $0.importNow(urls: [dir.appendingPathComponent("export/Spotify Account Data")]) }
+        let otherStats = try other.sync { try $0.statsNow(for: .allTime, timeZone: TimeZone(identifier: "UTC")!) }
+        XCTAssertEqual(otherStats, stats)
+    }
+
+    func testZipImport() throws {
+        try write("Spotify Extended Streaming History/Streaming_History_Audio_2024_0.json", extended)
+        try write("Spotify Account Data/Userdata.json", #"{"username": "someone"}"#)
+        let zip = dir.appendingPathComponent("my_spotify_data.zip")
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        p.arguments = ["-c", "-k", "--keepParent", dir.appendingPathComponent("export").path, zip.path]
+        try p.run()
+        p.waitUntilExit()
+        XCTAssertEqual(p.terminationStatus, 0)
+        let s = store()
+        let r = try s.sync { try $0.importNow(urls: [zip]) }
+        XCTAssertEqual(r.files, 1, "Userdata.json is not streaming history")
+        XCTAssertEqual(r.added, 2)
+        // A single json file works too, and is a duplicate now.
+        let single = try s.sync {
+            try $0.importNow(urls: [self.dir.appendingPathComponent(
+                "export/Spotify Extended Streaming History/Streaming_History_Audio_2024_0.json")])
+        }
+        XCTAssertEqual(single.added, 0)
+        XCTAssertThrowsError(try s.sync { try $0.importNow(urls: [self.dir.appendingPathComponent("nothing")]) })
+    }
+
+    func testImportReplacesOverlappingLiveListens() throws {
+        let s = store()
+        let start = Date(timeIntervalSince1970: TimeInterval(ms("2024-03-01T10:00:00Z")) / 1000 + 2)
+        // Tonearm heard it live, a little later and a little shorter than Spotify counted.
+        s.save(LiveListen(trackID: "spotify:track:aaa", kind: .music, title: "Звезда", artist: "Кино",
+                          album: "Группа крови", artworkURL: "https://i.scdn.co/image/x", durationMs: 200_000,
+                          startedAt: start, endedAt: start.addingTimeInterval(196), msPlayed: 196_000))
+        // And another song nobody exported.
+        let later = start.addingTimeInterval(86_400 * 30)
+        s.save(LiveListen(trackID: "spotify:track:bbb", kind: .music, title: "Other", artist: "Someone",
+                          album: "", artworkURL: nil, durationMs: nil, startedAt: later,
+                          endedAt: later.addingTimeInterval(60), msPlayed: 60_000))
+        s.flush()
+        XCTAssertEqual(try s.sync { try $0.countNow() }, 2)
+        try write("Streaming_History_Audio_2024_0.json", extended)
+        let r = try s.sync { try $0.importNow(urls: [dir.appendingPathComponent("export")]) }
+        XCTAssertEqual(r.replacedLive, 1)
+        XCTAssertEqual(r.added, 2)
+        XCTAssertEqual(try s.sync { try $0.countNow() }, 3)
+        let stats = try s.sync { try $0.statsNow(for: .allTime, timeZone: TimeZone(identifier: "UTC")!) }
+        XCTAssertEqual(stats.music.ms, 260_000, "Spotify's 200 s, not Tonearm's 196 s, plus the other song")
+    }
+
+    func testLiveListenUpdatesInPlace() throws {
+        let s = store()
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        var l = LiveListen(trackID: "spotify:track:aaa", kind: .music, title: "T", artist: "A", album: "B",
+                           artworkURL: nil, durationMs: 100_000, startedAt: start, endedAt: start, msPlayed: 25_000)
+        s.save(l)
+        l.msPlayed = 50_000
+        l.artworkURL = "https://i.scdn.co/image/y"
+        s.save(l)
+        s.flush()
+        XCTAssertEqual(try s.sync { try $0.countNow() }, 1)
+        let stats = try s.sync { try $0.statsNow(for: .allTime, timeZone: TimeZone(identifier: "UTC")!) }
+        XCTAssertEqual(stats.music.ms, 50_000)
+    }
+
+    func testDeleteAllAndYears() async throws {
+        try write("a/StreamingHistory_music_0.json", """
+        [{"endTime": "2019-05-01 10:00", "artistName": "A", "trackName": "T", "msPlayed": 60000},
+         {"endTime": "2023-12-31 19:30", "artistName": "A", "trackName": "T", "msPlayed": 60000}]
+        """)
+        let s = store()
+        var progress: [ImportProgress] = []
+        let r = try await s.import(urls: [dir.appendingPathComponent("export")]) { progress.append($0) }
+        XCTAssertEqual(r.added, 2)
+        XCTAssertEqual(progress.last?.filesDone, 1)
+        let utcYears = await s.years(timeZone: TimeZone(identifier: "UTC")!)
+        XCTAssertEqual(utcYears, [2019, 2023])
+        // 19:29 UTC on Dec 31 is already 2024 in Tashkent (UTC+5).
+        let tashkentYears = await s.years(timeZone: TimeZone(identifier: "Asia/Tashkent")!)
+        XCTAssertEqual(tashkentYears, [2019, 2024])
+        let count = await s.count()
+        XCTAssertEqual(count, 2)
+
+        let started = Date().addingTimeInterval(-10)
+        try await s.deleteAll()
+        let afterDelete = await s.count()
+        XCTAssertEqual(afterDelete, 0)
+        // The listen that was open while deleting does not come back.
+        s.save(LiveListen(trackID: "spotify:track:x", kind: .music, title: "T", artist: "A", album: "",
+                          artworkURL: nil, durationMs: nil, startedAt: started, endedAt: Date(), msPlayed: 10_000))
+        s.flush()
+        let afterSave = await s.count()
+        XCTAssertEqual(afterSave, 0)
+        let empty = await s.stats(for: .allTime)
+        XCTAssertTrue(empty.isEmpty)
+    }
+
+    func testTimestamps() {
+        XCTAssertEqual(Timestamp.parse("1970-01-01T00:00:00Z"), 0)
+        XCTAssertEqual(Timestamp.parse("2024-03-01T10:03:20Z"), 1_709_287_400_000)
+        XCTAssertEqual(Timestamp.parse("2024-03-01 10:03"), 1_709_287_380_000)
+        XCTAssertEqual(Timestamp.parse("2024-03-01T10:03:20.5Z"), 1_709_287_400_500)
+        XCTAssertEqual(Timestamp.parse("2024-03-01T15:03:20+05:00"), 1_709_287_400_000)
+        XCTAssertEqual(Timestamp.parse("2024-02-29T00:00:00Z"), 1_709_164_800_000)
+        XCTAssertNil(Timestamp.parse("2024-13-01T00:00:00Z"))
+        XCTAssertNil(Timestamp.parse("yesterday"))
+        XCTAssertNil(Timestamp.parse("2024-03-01T10:03:20Zjunk"))
+    }
+
+    func testDedupKey() {
+        let a = ImportRecord(kind: .music, title: "T", artist: "A", album: "X", uri: "spotify:track:1",
+                             endedAt: ms("2024-03-01T10:03:59Z"), msPlayed: 1000, precision: 1)
+        var b = a
+        b.endedAt = ms("2024-03-01T10:03:00Z")
+        b.album = ""
+        b.uri = ""
+        b.precision = 0
+        XCTAssertEqual(a.dedupKey, b.dedupKey, "same play from the two export kinds")
+        b.endedAt = ms("2024-03-01T10:04:00Z")
+        XCTAssertNotEqual(a.dedupKey, b.dedupKey)
+        var c = a
+        c.artist = "Another"
+        XCTAssertNotEqual(a.dedupKey, c.dedupKey, "same title by another artist")
+        var d = a
+        d.msPlayed = 1001
+        XCTAssertNotEqual(a.dedupKey, d.dedupKey)
+    }
+}
