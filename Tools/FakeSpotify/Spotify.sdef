@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<!--
+  The fake Spotify's AppleScript dictionary. Written for Tonearm's end-to-end tests: it
+  declares only the terms Tonearm sends, with the four-char codes the real app uses, so a
+  script compiled against this fake sends the same Apple Events. The E2E workflow checks
+  every name and code here against the installed Spotify app (Tools/FakeSpotify/check-sdef.py).
+-->
+<dictionary title="Fake Spotify" xmlns:xi="http://www.w3.org/2003/XInclude">
+    <!-- Apple's standard suite: the application class, get and set. -->
+    <xi:include href="file:///System/Library/ScriptingDefinitions/CocoaStandard.sdef" xpointer="xpointer(/dictionary/suite)"/>
+
+    <suite name="Player" code="spfy" description="The player Tonearm controls.">
+        <enumeration name="ePlS" code="ePlS">
+            <enumerator name="stopped" code="kPSS" description="Nothing is playing."/>
+            <enumerator name="playing" code="kPSP" description="A track is playing."/>
+            <enumerator name="paused" code="kPSp" description="A track is loaded and paused."/>
+        </enumeration>
+
+        <class name="track" code="spTr" description="The loaded track, episode or ad.">
+            <cocoa class="FakeTrack"/>
+            <property name="id" code="ID  " type="text" access="r" description="Spotify URI.">
+                <cocoa key="trackID"/>
+            </property>
+            <property name="name" code="pnam" type="text" access="r" description="Title.">
+                <cocoa key="name"/>
+            </property>
+            <property name="artist" code="pArt" type="text" access="r" description="Artist.">
+                <cocoa key="artist"/>
+            </property>
+            <property name="album" code="pAlb" type="text" access="r" description="Album.">
+                <cocoa key="album"/>
+            </property>
+            <property name="artwork url" code="aUrl" type="text" access="r" description="Cover image URL.">
+                <cocoa key="artworkURL"/>
+            </property>
+            <property name="duration" code="pDur" type="integer" access="r" description="Length in milliseconds.">
+                <cocoa key="duration"/>
+            </property>
+        </class>
+
+        <class-extension extends="application" description="Player state.">
+            <property name="current track" code="pTrk" type="track" access="r" description="The loaded track.">
+                <cocoa key="currentTrack"/>
+            </property>
+            <property name="player state" code="pPlS" type="ePlS" access="r" description="Playing, paused or stopped.">
+                <cocoa key="playerState"/>
+            </property>
+            <property name="player position" code="pPos" type="real" description="Playhead, in seconds.">
+                <cocoa key="playerPosition"/>
+            </property>
+            <property name="sound volume" code="pVol" type="integer" description="0 to 100.">
+                <cocoa key="soundVolume"/>
+            </property>
+            <property name="shuffling" code="pShu" type="boolean" description="Shuffle on or off.">
+                <cocoa key="shuffling"/>
+            </property>
+            <property name="repeating" code="pRep" type="boolean" description="Repeat on or off.">
+                <cocoa key="repeating"/>
+            </property>
+        </class-extension>
+
+        <command name="play" code="spfyPlay" description="Start playing.">
+            <cocoa class="FakePlayCommand"/>
+        </command>
+        <command name="playpause" code="spfyPlPs" description="Toggle play and pause.">
+            <cocoa class="FakePlayPauseCommand"/>
+        </command>
+        <command name="next track" code="spfyNext" description="Skip to the next track.">
+            <cocoa class="FakeNextCommand"/>
+        </command>
+        <command name="previous track" code="spfyPrev" description="Go back to the previous track.">
+            <cocoa class="FakePreviousCommand"/>
+        </command>
+    </suite>
+</dictionary>
