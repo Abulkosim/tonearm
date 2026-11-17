@@ -115,6 +115,10 @@ jobs:
         run: scripts/build-app.sh
       - name: Check app bundle and launch it
         run: EXPECT_SIGNING=self-signed scripts/check-app.sh build/Tonearm.app
+      - name: Launch gate rejects the v0.3.0 signing
+        env:
+          SIGN_IDENTITY: Tonearm Self-Signed
+        run: scripts/launch-gate-test.sh build/Tonearm.app
       - name: Package
         env:
           SIGN_IDENTITY: Tonearm Self-Signed
