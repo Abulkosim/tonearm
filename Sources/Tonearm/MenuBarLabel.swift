@@ -33,11 +33,23 @@ struct MenuBarLabel: View {
         NSImage(systemSymbolName: "opticaldisc", accessibilityDescription: nil) != nil ? "opticaldisc" : "music.note"
 
     /// Menu bar text for a track. Pure, for tests.
+    ///
+    /// With the artist on, a cut in the artist ends at a word only inside the artist, and when
+    /// no letter of the artist fits, the title shows alone. Either way an ellipsis after the
+    /// title means the title itself was cut.
     static func title(_ title: String, artist: String, showArtist: Bool, maxLength: Int) -> String {
-        var parts = [singleLine(title)]
-        if showArtist { parts.append(singleLine(artist)) }
-        return shorten(parts.filter { !$0.isEmpty }.joined(separator: " · "), to: maxLength)
+        let title = singleLine(title), artist = showArtist ? singleLine(artist) : ""
+        guard !title.isEmpty, !artist.isEmpty else { return shorten(title.isEmpty ? artist : title, to: maxLength) }
+        let joined = title + separator + artist
+        if joined.count <= maxLength { return joined }
+        if title.count >= maxLength { return shorten(title, to: maxLength) }
+        // Characters left for the artist before the ellipsis.
+        let artistStart = title.count + separator.count
+        if maxLength - 1 - artistStart < 1 { return title }
+        return shorten(joined, to: maxLength, wordsFrom: artistStart)
     }
+
+    static let separator = " · "
 
     /// Lays out `text`, which is `title(...)`, left to right with the song title first, and keeps
     /// each part's own direction inside it. Without this an Arabic title made the whole line
@@ -46,7 +58,6 @@ struct MenuBarLabel: View {
     static func leftToRight(_ text: String, firstPart: String) -> String {
         let lrm = "\u{200E}"
         func isolate(_ s: String) -> String { "\u{2068}" + s + "\u{2069}" }
-        let separator = " · "
         guard !firstPart.isEmpty, text.hasPrefix(firstPart + separator) else { return lrm + isolate(text) }
         let rest = String(text.dropFirst(firstPart.count + separator.count))
         return lrm + isolate(firstPart) + separator + isolate(rest)
@@ -58,9 +69,9 @@ struct MenuBarLabel: View {
     }
 
     /// Cuts `s` to at most `max` characters, ending in "…" when cut, after a whole word when
-    /// one ends in the second half.
+    /// one ends in the second half, and at or after character `wordsFrom`.
     /// Whitespace and separators left at the cut are dropped before the ellipsis. Pure, for tests.
-    static func shorten(_ s: String, to max: Int) -> String {
+    static func shorten(_ s: String, to max: Int, wordsFrom: Int = 0) -> String {
         let s = s.trimmingCharacters(in: .whitespacesAndNewlines)
         guard s.count > max else { return s }
         guard max > 1 else { return max == 1 ? "…" : "" }
@@ -68,7 +79,7 @@ struct MenuBarLabel: View {
         // End at a word's end when one is in the second half, not mid-word ("Dancefloo…").
         let cutMidWord = !Array(s)[max - 1].isWhitespace
         if cutMidWord, let space = head.lastIndex(where: \.isWhitespace),
-           head.distance(from: head.startIndex, to: space) >= max / 2 {
+           head.distance(from: head.startIndex, to: space) >= Swift.max(max / 2, wordsFrom) {
             head = head[..<space]
         }
         while let last = head.last, last.isWhitespace || "·-–—,:;".contains(last) {
