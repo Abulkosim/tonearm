@@ -11,18 +11,21 @@
 # TCC database, which works there because SIP is off. Anywhere else macOS asks for
 # Automation access the first time.
 #
-# Don't run this on a Mac where the real Spotify is installed: Launch Services may pick
+# It refuses to start while Spotify or Tonearm is running, and only ever quits the fake.
+# Don't run it on a Mac where the real Spotify is installed: Launch Services may pick
 # either app. Tonearm --e2e refuses to drive an app that is not the fake.
 #
 # Environment:
-#   TONEARM_APP  Tonearm.app to test. Default: build/Tonearm.app, built if missing.
+#   TONEARM_APP  Tonearm.app to test, as is. Default: build it with scripts/build-app.sh
+#                and test build/Tonearm.app.
 #   E2E_DIR      Work and output directory. Default: build/e2e.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 E2E_DIR="${E2E_DIR:-build/e2e}"
-TONEARM_APP="${TONEARM_APP:-build/Tonearm.app}"
-FAKE="$E2E_DIR/Spotify.app"
+mkdir -p "$E2E_DIR"
+FAKE="$(cd "$E2E_DIR" && pwd -P)/Spotify.app"
+FAKE_EXE="$FAKE/Contents/MacOS/Spotify"
 REPORT="$E2E_DIR/report"
 FAKE_LOG="$HOME/Library/Logs/TonearmE2E/fake-spotify.log"
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
@@ -44,19 +47,59 @@ build_fake() {
   "$LSREGISTER" -f "$FAKE"
 }
 
+# Prints the pids of processes named Spotify: with "fake" those that run the fake's
+# executable, with "other" the rest.
+spotify_pids() {
+  local pid exe
+  for pid in $(pgrep -x Spotify || true); do
+    exe="$(ps -o comm= -p "$pid" 2>/dev/null)" || continue
+    if [ "$exe" = "$FAKE_EXE" ]; then
+      [ "$1" = fake ] && echo "$pid"
+    else
+      [ "$1" = other ] && echo "$pid"
+    fi
+  done
+  return 0
+}
+
+# Quits the fake, and nothing else. Fails if it is still running after 5 s and a SIGKILL.
 quit_fake() {
-  pkill -x Spotify 2>/dev/null || true
+  local pids
+  pids="$(spotify_pids fake)"
+  [ -n "$pids" ] || return 0
+  # shellcheck disable=SC2086
+  kill $pids 2>/dev/null || true
   for _ in $(seq 1 50); do
-    pgrep -x Spotify > /dev/null || return 0
+    [ -z "$(spotify_pids fake)" ] && return 0
     sleep 0.1
   done
-  pkill -9 -x Spotify 2>/dev/null || true
+  pids="$(spotify_pids fake)"
+  # shellcheck disable=SC2086
+  [ -z "$pids" ] || kill -9 $pids 2>/dev/null || true
+  sleep 0.5
+  if [ -n "$(spotify_pids fake)" ]; then
+    echo "e2e: the fake Spotify did not quit" >&2
+    return 1
+  fi
+}
+
+# A running Spotify would answer the test's Apple Events, and a running Tonearm would react
+# to the fake's notifications and send its own commands.
+refuse_if_running() {
+  if [ -n "$(spotify_pids other)" ]; then
+    echo "e2e: Spotify is running. Quit it first; this test only drives its fake." >&2
+    exit 1
+  fi
+  if pgrep -x Tonearm > /dev/null; then
+    echo "e2e: Tonearm is running. Quit it first; it would send its own commands to the fake." >&2
+    exit 1
+  fi
 }
 
 # Called by the EXIT trap.
 # shellcheck disable=SC2317
 cleanup() {
-  quit_fake
+  quit_fake || true
   "$LSREGISTER" -u "$FAKE" 2>/dev/null || true
 }
 
@@ -85,9 +128,13 @@ allow_apple_events() {
 preflight() {
   open -g "$FAKE"
   for _ in $(seq 1 50); do
-    pgrep -x Spotify > /dev/null && break
+    [ -n "$(spotify_pids fake)" ] && break
     sleep 0.1
   done
+  if [ -z "$(spotify_pids fake)" ]; then
+    echo "preflight: the fake did not start, or runs from a path other than $FAKE_EXE" >&2
+    return 1
+  fi
   local reply
   if ! reply="$(with_timeout 30 osascript -e \
       'tell application id "com.spotify.client" to return (player state as string) & " / " & (name of current track)')"; then
@@ -98,8 +145,11 @@ preflight() {
   quit_fake
 }
 
-[ -d "$TONEARM_APP" ] || scripts/build-app.sh
-mkdir -p "$E2E_DIR"
+refuse_if_running
+if [ -z "${TONEARM_APP:-}" ]; then
+  scripts/build-app.sh
+  TONEARM_APP=build/Tonearm.app
+fi
 rm -rf "$REPORT"
 mkdir -p "$REPORT" "$(dirname "$FAKE_LOG")"
 quit_fake
