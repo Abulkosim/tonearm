@@ -319,26 +319,45 @@ final class HistoryStoreTests: XCTestCase {
         let r = try await s.import(urls: [dir.appendingPathComponent("export")]) { progress.append($0) }
         XCTAssertEqual(r.added, 2)
         XCTAssertEqual(progress.last?.filesDone, 1)
-        let utcYears = await s.years(timeZone: TimeZone(identifier: "UTC")!)
+        let utcYears = try await s.years(timeZone: TimeZone(identifier: "UTC")!)
         XCTAssertEqual(utcYears, [2019, 2023])
         // 19:29 UTC on Dec 31 is already 2024 in Tashkent (UTC+5).
-        let tashkentYears = await s.years(timeZone: TimeZone(identifier: "Asia/Tashkent")!)
+        let tashkentYears = try await s.years(timeZone: TimeZone(identifier: "Asia/Tashkent")!)
         XCTAssertEqual(tashkentYears, [2019, 2024])
-        let count = await s.count()
+        let count = try await s.count()
         XCTAssertEqual(count, 2)
 
         let started = Date().addingTimeInterval(-10)
         try await s.deleteAll()
-        let afterDelete = await s.count()
+        let afterDelete = try await s.count()
         XCTAssertEqual(afterDelete, 0)
         // The listen that was open while deleting does not come back.
         s.save(LiveListen(trackID: "spotify:track:x", kind: .music, title: "T", artist: "A", album: "",
                           artworkURL: nil, durationMs: nil, startedAt: started, endedAt: Date(), msPlayed: 10_000))
         s.flush()
-        let afterSave = await s.count()
+        let afterSave = try await s.count()
         XCTAssertEqual(afterSave, 0)
-        let empty = await s.stats(for: .allTime)
+        let empty = try await s.stats(for: .allTime)
         XCTAssertTrue(empty.isEmpty)
+    }
+
+    /// A database that can't be opened is an error, not empty stats, and the store tries
+    /// again on the next call instead of giving up until relaunch.
+    func testOpenFailureIsReportedAndRetried() async throws {
+        let blocker = dir.appendingPathComponent("db")
+        try Data("a file where the folder should be".utf8).write(to: blocker)
+        let s = store()
+        do {
+            _ = try await s.stats(for: .allTime)
+            XCTFail("stats on a database that can't be opened")
+        } catch {}
+        do {
+            _ = try await s.count()
+            XCTFail("count on a database that can't be opened")
+        } catch {}
+        try FileManager.default.removeItem(at: blocker)
+        let count = try await s.count()
+        XCTAssertEqual(count, 0)
     }
 
     /// After "delete all", no title is left in the database file or its WAL, with the
