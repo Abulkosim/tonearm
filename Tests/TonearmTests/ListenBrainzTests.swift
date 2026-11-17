@@ -273,6 +273,29 @@ final class ListenBrainzClientTests: XCTestCase {
         store.delete()
         XCTAssertNil(KeychainTokenStore(service: service).read())
     }
+
+    func testAKeychainDenialIsAskedOnce() {
+        var asks = 0
+        var status = errSecAuthFailed
+        let denied = KeychainTokenStore(service: "unused") { _, _ in
+            asks += 1
+            return status
+        }
+        XCTAssertNil(denied.read())
+        XCTAssertNil(denied.read())
+        XCTAssertNil(denied.read())
+        XCTAssertEqual(asks, 1, "a denial is remembered, so the prompt doesn't come back on every song")
+
+        asks = 0
+        status = errSecInteractionNotAllowed
+        let locked = KeychainTokenStore(service: "unused") { _, _ in
+            asks += 1
+            return status
+        }
+        XCTAssertNil(locked.read())
+        XCTAssertNil(locked.read())
+        XCTAssertEqual(asks, 2, "a locked Keychain shows no prompt, so it is asked again")
+    }
 }
 
 // MARK: - Sync: queue, retry, rate limit, history
