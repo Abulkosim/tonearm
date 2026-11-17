@@ -310,6 +310,24 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertTrue(empty.isEmpty)
     }
 
+    /// After "delete all", no title is left in the database file or its WAL, with the
+    /// store still open as it is in the app.
+    func testDeleteAllLeavesNothingOnDisk() throws {
+        try write("Streaming_History_Audio_2024_0.json", extended)
+        let s = store()
+        _ = try s.sync { try $0.importNow(urls: [dir.appendingPathComponent("export")]) }
+        let wal = URL(fileURLWithPath: s.url.path + "-wal")
+        let title = Data("Группа крови".utf8)
+        let before = try Data(contentsOf: s.url) + Data(contentsOf: wal)
+        XCTAssertNotNil(before.range(of: title), "else the checks below prove nothing")
+        try s.sync { try $0.deleteAllNow() }
+        XCTAssertEqual(try s.sync { try $0.countNow() }, 0)
+        let walAfter = try Data(contentsOf: wal)
+        XCTAssertEqual(walAfter.count, 0)
+        XCTAssertNil(try Data(contentsOf: s.url).range(of: title))
+        XCTAssertNil(walAfter.range(of: title))
+    }
+
     func testTimestamps() {
         XCTAssertEqual(Timestamp.parse("1970-01-01T00:00:00Z"), 0)
         XCTAssertEqual(Timestamp.parse("2024-03-01T10:03:20Z"), 1_709_287_400_000)

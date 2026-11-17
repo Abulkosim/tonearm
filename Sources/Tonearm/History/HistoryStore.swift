@@ -500,13 +500,22 @@ final class HistoryStore: @unchecked Sendable {
 
     // MARK: Delete
 
+    /// Deletes every listen and leaves no copy of them on disk. SQLite keeps old pages in
+    /// the main file until a vacuum and in history.sqlite-wal until a checkpoint, and it
+    /// reuses the WAL rather than shrinking it. So: zero freed pages, rebuild the file, copy
+    /// the WAL back and cut it to zero bytes.
     func deleteAllNow() throws {
         let d = try db()
+        try d.exec("PRAGMA secure_delete = ON")
         try d.transaction {
             try d.exec("DELETE FROM listens; DELETE FROM tracks;")
         }
-        try? d.exec("VACUUM")
         catalogCache = nil
         liveFloor = Int64((Date().timeIntervalSince1970 * 1000).rounded(.up))
+        try d.exec("VACUUM")
+        // The first column is 1 if another connection kept the checkpoint from finishing.
+        guard try d.int("PRAGMA wal_checkpoint(TRUNCATE)") == 0 else {
+            throw SQLiteError.step("could not clear history.sqlite-wal; the database is busy")
+        }
     }
 }
