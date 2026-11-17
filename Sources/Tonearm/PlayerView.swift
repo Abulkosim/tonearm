@@ -26,6 +26,11 @@ struct PlayerView: View {
         var screenHeight: CGFloat?
         /// How far the settings are scrolled when they don't fit: 0 is the top, 1 the bottom.
         var settingsScroll: CGFloat = 0
+        /// Settings > History and ListenBrainz. Nil shows a sample history with ListenBrainz off.
+        var history: HistorySettingsModel?
+        var listenBrainz: ListenBrainzSync?
+        /// Text in the ListenBrainz token field.
+        var token = ""
     }
 
     /// Nil in the app.
@@ -138,7 +143,10 @@ struct PlayerView: View {
             SettingsView(settings: preview.settings ?? settings,
                          notificationsDenied: preview.notificationsDenied,
                          loginNeedsApproval: preview.loginNeedsApproval,
-                         canCheckForUpdates: preview.canCheckForUpdates)
+                         canCheckForUpdates: preview.canCheckForUpdates,
+                         history: preview.history ?? .sample,
+                         listenBrainz: preview.listenBrainz ?? .preview(connection: .noToken),
+                         token: preview.token)
         } else {
             SettingsView(notificationsDenied: model.notificationsDenied,
                          openNotificationSettings: model.openNotificationSettings)

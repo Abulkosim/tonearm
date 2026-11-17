@@ -261,6 +261,69 @@ enum StateWalk {
                 $0.settingsOpen = true
             }, scrolls: true)
 
+        // Settings > History and ListenBrainz. The whole panel, then the real window scrolled to them.
+        let march2019 = HistorySettingsModel.date(2019, 3, 4)
+        let full = HistorySummary(count: 48_872, first: march2019, last: HistorySettingsModel.date(2026, 11, 16))
+        let since = ListenBrainzSync.ms(HistorySettingsModel.date(2026, 11, 1))
+        let sending = ListenBrainzSync.HistorySend(
+            before: since, first: ListenBrainzSync.ms(march2019),
+            cursor: ListenCursor(startedAt: ListenBrainzSync.ms(HistorySettingsModel.date(2021, 6, 2)), id: 1),
+            sent: 14_000)
+        let connected = ListenBrainzSync.Saved(userName: "rob_listens", sent: 112, since: since, history: sending)
+        var waiting = ListenBrainzSync.Saved(userName: "rob_listens", sent: 112, since: since)
+        waiting.pending = (0..<3).map {
+            LBListen(key: "s\($0)", listenedAt: 1_700_000_000 + Int64($0) * 300, track: "Song", artist: "Artist")
+        }
+        var done = connected
+        done.history?.finished = HistorySettingsModel.date(2026, 11, 2)
+        done.history?.sent = 39_410
+        let imported = HistorySettingsModel.Note(action: .imported, text: HistorySettingsModel.describe(
+            ImportResult(files: 7, rows: 51_000, added: 48_872, duplicates: 1_203, skipped: 925,
+                         unreadable: ["notes.json"], first: march2019, last: HistorySettingsModel.date(2026, 10, 30))))
+        let exported = HistorySettingsModel.Note(action: .exported,
+                                                 text: "Saved 48,872 listens to Tonearm listens 2026-11-17.csv.",
+                                                 file: URL(fileURLWithPath: "/tmp/listens.csv"))
+        let deleteFailed = HistorySettingsModel.Note(action: .deleted, text: "Could not delete: the database is busy",
+                                                     isError: true)
+        add("settings-history-empty", "History: nothing stored, recording off, ListenBrainz off",
+            panel(.preview(summary: HistorySummary()), .preview(connection: .noToken)) { $0.recordHistory = false },
+            limit: nil)
+        add("settings-history-importing", "History: importing; ListenBrainz on, token typed",
+            panel(.preview(summary: full, importing: ImportProgress(filesDone: 3, filesTotal: 7, rowsRead: 31_204)),
+                  .preview(connection: .noToken), token: "0a1b2c3d-4e5f") { $0.listenBrainz = true },
+            limit: nil)
+        add("settings-history-imported", "History: import done; ListenBrainz refused the token",
+            panel(.preview(summary: full, note: imported),
+                  .preview(connection: .tokenRejected, problem: "ListenBrainz did not accept that token."),
+                  token: "wrong") { $0.listenBrainz = true },
+            limit: nil)
+        add("settings-history-delete", "History: delete confirmation; ListenBrainz sending earlier listens",
+            panel(.preview(summary: full, confirmingDelete: true), .preview(connection: .connected, saved: connected)) {
+                $0.listenBrainz = true
+            }, limit: nil)
+        add("settings-history-offline", "History: exported; ListenBrainz offline with listens waiting",
+            panel(.preview(summary: full, note: exported),
+                  .preview(connection: .connected, saved: waiting, problem: "Can't reach ListenBrainz.",
+                           retryAt: Date().addingTimeInterval(120))) { $0.listenBrainz = true },
+            limit: nil)
+        add("settings-history-sent", "History: recording off, delete failed; earlier listens all sent",
+            panel(.preview(summary: full, note: deleteFailed), .preview(connection: .connected, saved: done)) {
+                $0.listenBrainz = true
+                $0.recordHistory = false
+            }, limit: nil)
+        add("settings-large-history", "Settings, 1440 x 900 screen, scrolled to History",
+            pop(playing(Samples.song), screen: WalkScreen.large) {
+                $0.settingsOpen = true
+                $0.settingsScroll = 0.62
+                $0.settings = settings { $0.listenBrainz = true }
+                $0.listenBrainz = ListenBrainzSync.preview(connection: .connected, saved: connected)
+            }, limit: bigLimit, scrolls: true)
+        add("settings-small-history", "Settings, small screen, scrolled to History",
+            pop(playing(Samples.song)) {
+                $0.settingsOpen = true
+                $0.settingsScroll = 0.6
+            }, scrolls: true)
+
         // Welcome window.
         let welcomeLimit = WalkScreen.small - 12
         add("welcome", "Welcome window", AnyView(Onboarding.snapshotView(spotifyInstalled: true)), limit: welcomeLimit)
@@ -330,6 +393,8 @@ enum StateWalk {
         s.layout = .large
         s.globalShortcuts = false
         s.notifyOnTrackChange = false
+        s.recordHistory = true
+        s.listenBrainz = false
         edit(s)
         return s
     }
@@ -343,6 +408,17 @@ enum StateWalk {
         preview.settings = settings { $0.layout = layout }
         edit(&preview)
         return AnyView(PlayerView(preview: preview).environmentObject(model))
+    }
+
+    /// The settings panel alone at its full height, with History and ListenBrainz in a given state.
+    private static func panel(_ history: HistorySettingsModel, _ listenBrainz: ListenBrainzSync, token: String = "",
+                              _ edit: (AppSettings) -> Void = { _ in }) -> AnyView {
+        AnyView(
+            SettingsView(settings: settings(edit), history: history, listenBrainz: listenBrainz, token: token)
+                .padding(16)
+                .frame(width: 300)
+                .background(PlayerTheme.fallback)
+        )
     }
 
     /// Before Spotify answers: no song, status from the preview.

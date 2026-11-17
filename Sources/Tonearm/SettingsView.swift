@@ -2,23 +2,35 @@ import AppKit
 import SwiftUI
 
 /// Settings panel shown inside the popover. Reads the `AppSettings.shared`,
-/// `LaunchAtLogin.shared` and `Updater.shared` singletons, so it needs no environment
-/// objects. It has no outer padding or background: the host adds them.
+/// `LaunchAtLogin.shared`, `Updater.shared`, `HistorySettingsModel.shared` and
+/// `ListenBrainzSync.shared` singletons, so it needs no environment objects. It has no outer
+/// padding or background: the host adds them.
 struct SettingsView: View {
     @ObservedObject private var settings: AppSettings
     @ObservedObject private var login = LaunchAtLogin.shared
     @ObservedObject private var updater = Updater.shared
+    @ObservedObject private var history: HistorySettingsModel
+    @ObservedObject private var listenBrainz: ListenBrainzSync
+    /// Typed into the ListenBrainz token field. Never stored; the Keychain keeps the token.
+    @State private var token = ""
     /// macOS blocks Tonearm's notifications while "Notify on song change" is on.
     private let notificationsDenied: Bool
     private let openNotificationSettings: () -> Void
     /// Fixed values for snapshots. Nil in the app, which asks the real objects.
     private let loginNeedsApprovalPreview: Bool?
     private let canCheckForUpdatesPreview: Bool?
+    /// Snapshots can't draw a text field, so they get a drawn one.
+    private let isSnapshot: Bool
 
     init(settings: AppSettings = .shared,
          notificationsDenied: Bool = false, openNotificationSettings: @escaping () -> Void = {},
-         loginNeedsApproval: Bool? = nil, canCheckForUpdates: Bool? = nil) {
+         loginNeedsApproval: Bool? = nil, canCheckForUpdates: Bool? = nil,
+         history: HistorySettingsModel? = nil, listenBrainz: ListenBrainzSync? = nil, token: String = "") {
         _settings = ObservedObject(wrappedValue: settings)
+        _history = ObservedObject(wrappedValue: history ?? .shared)
+        _listenBrainz = ObservedObject(wrappedValue: listenBrainz ?? .shared)
+        _token = State(initialValue: token)
+        isSnapshot = history != nil
         self.notificationsDenied = notificationsDenied
         self.openNotificationSettings = openNotificationSettings
         loginNeedsApprovalPreview = loginNeedsApproval
@@ -90,16 +102,21 @@ struct SettingsView: View {
 
             divider
 
-            Text("In the player")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(Theme.secondary)
-                .frame(height: 24)
+            sectionTitle("In the player")
             HStack(alignment: .top, spacing: 16) {
                 ShortcutList(items: Array(KeyCommand.help.prefix(4)), keyWidth: Self.keyColumn)
                 ShortcutList(items: Array(KeyCommand.help.dropFirst(4)), keyWidth: 28)
             }
             .padding(.bottom, 4)
             .accessibilityElement(children: .combine)
+
+            divider
+
+            historySection
+
+            divider
+
+            listenBrainzSection
 
             divider
 
@@ -131,11 +148,296 @@ struct SettingsView: View {
         .animation(Theme.ease, value: loginNeedsApproval)
         .animation(Theme.ease, value: settings.globalShortcuts)
         .animation(Theme.ease, value: notificationsDenied)
-        .onAppear { login.refresh() }
+        .animation(Theme.ease, value: settings.listenBrainz)
+        .animation(Theme.ease, value: history.confirmingDelete)
+        .onAppear {
+            login.refresh()
+            history.refresh()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             login.refresh()
         }
     }
+
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(Theme.secondary)
+            .frame(height: 24)
+    }
+
+    // MARK: History
+
+    @ViewBuilder private var historySection: some View {
+        sectionTitle("History")
+        row("Record listening") {
+            GreenSwitch(isOn: $settings.recordHistory, label: "Record listening")
+        }
+        line(history.summaryLine(recording: settings.recordHistory))
+
+        actionRow(history.isImporting ? "Importing…" : "Import Spotify data…") { history.chooseImport() }
+            .disabled(history.isImporting)
+            .help("The .zip Spotify sends from Account › Privacy › Download your data")
+        if history.isImporting {
+            progressLine(importProgressText, fraction: history.progress.map {
+                Double($0.filesDone) / Double(max(1, $0.filesTotal))
+            })
+        }
+        resultNote(.imported)
+
+        row("Export") {
+            HStack(spacing: 4) {
+                smallButton("CSV") { history.chooseExport(.csv) }
+                smallButton("JSON") { history.chooseExport(.json) }
+            }
+            .disabled((history.summary?.count ?? 0) == 0 || history.isBusy)
+        }
+        resultNote(.exported)
+
+        if history.confirmingDelete {
+            deleteConfirmation
+                .transition(.opacity)
+        } else {
+            actionRow("Delete all history…") { history.confirmingDelete = true }
+                .disabled((history.summary?.count ?? 0) == 0 || history.isImporting)
+        }
+        resultNote(.deleted)
+
+        privacyNote
+    }
+
+    /// Where the history is. The path gets its own line so it never breaks at a slash.
+    private var privacyNote: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Stored only on this Mac, in")
+                Spacer(minLength: 0)
+                Button("Show in Finder") { history.showInFinder() }
+                    .buttonStyle(QuietButtonStyle(color: Theme.accent, hover: Theme.accentHover))
+                    .fixedSize()
+            }
+            Text(history.displayFolder)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .font(.system(size: 12))
+        .foregroundColor(Theme.secondary)
+        .padding(.vertical, 4)
+        .padding(.bottom, 4)
+    }
+
+    private var importProgressText: String {
+        guard let p = history.progress, p.filesTotal > 0 else { return "Opening…" }
+        let file = min(p.filesDone + 1, p.filesTotal)
+        return "Reading file \(file) of \(p.filesTotal), \(HistorySettingsModel.count(p.rowsRead)) rows so far"
+    }
+
+    private var deleteConfirmation: some View {
+        let n = history.summary?.count ?? 0
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Delete \(HistorySettingsModel.count(n)) \(n == 1 ? "listen" : "listens") from this Mac? "
+                 + "This can't be undone. Listens already sent to ListenBrainz stay there.")
+                .font(.system(size: 12))
+                .foregroundColor(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 4) {
+                Spacer(minLength: 0)
+                smallButton("Cancel") { history.confirmingDelete = false }
+                smallButton("Delete", color: Theme.danger) {
+                    Task { await history.deleteAll(listenBrainz: listenBrainz) }
+                }
+                .disabled(history.isBusy)
+            }
+        }
+        .padding(.vertical, 4)
+        .padding(.bottom, 4)
+    }
+
+    /// The last import, export or delete result, under its row.
+    @ViewBuilder private func resultNote(_ action: HistorySettingsModel.Action) -> some View {
+        if let n = history.note, n.action == action {
+            if let file = n.file {
+                note(n.text, action: "Show") { history.showInFinder(file) }
+            } else {
+                line(n.text, color: n.isError ? Theme.danger : Theme.secondary)
+            }
+        }
+    }
+
+    // MARK: ListenBrainz
+
+    @ViewBuilder private var listenBrainzSection: some View {
+        row("Send to ListenBrainz") {
+            GreenSwitch(isOn: $settings.listenBrainz, label: "Send to ListenBrainz")
+        }
+        if settings.listenBrainz {
+            switch listenBrainz.connection {
+            case .connected:
+                connectedRows
+            case .noToken, .checking, .tokenRejected:
+                tokenRows
+            }
+        } else {
+            line("Off. Nothing leaves this Mac.")
+        }
+    }
+
+    @ViewBuilder private var tokenRows: some View {
+        let checking = listenBrainz.connection == .checking
+        HStack(spacing: 8) {
+            tokenField
+            smallButton(checking ? "Checking…" : "Connect", color: Theme.accent) { connect() }
+                .disabled(checking || token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .frame(height: 32)
+        if let problem = listenBrainz.problem {
+            line(problem, color: Theme.danger)
+        }
+        note("Paste your user token from ListenBrainz. It is kept in your Keychain.", action: "Get token") {
+            NSWorkspace.shared.open(ListenBrainz.settingsPage)
+        }
+    }
+
+    private func connect() {
+        let typed = token
+        Task {
+            await listenBrainz.connect(token: typed)
+            if listenBrainz.connection == .connected { token = "" }
+        }
+    }
+
+    private var tokenField: some View {
+        Group {
+            if isSnapshot {
+                Text(token.isEmpty ? "User token" : String(repeating: "•", count: min(token.count, 20)))
+                    .foregroundColor(token.isEmpty ? Theme.muted : .white)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                SecureField("User token", text: $token)
+                    .textFieldStyle(.plain)
+                    .onSubmit(connect)
+            }
+        }
+        .font(.system(size: 12))
+        .padding(.horizontal, 8)
+        .frame(height: 24)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.white.opacity(0.06)))
+        .accessibilityLabel("ListenBrainz user token")
+    }
+
+    @ViewBuilder private var connectedRows: some View {
+        let saved = listenBrainz.saved
+        HStack(spacing: 8) {
+            Text(saved.userName.map { "Connected as \($0)" } ?? "Connected")
+                .foregroundColor(Theme.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
+            Button("Remove token") { listenBrainz.disconnect() }
+                .buttonStyle(QuietButtonStyle(color: Theme.secondary, hover: .white))
+                .fixedSize()
+        }
+        .font(.system(size: 12))
+        .frame(height: 24)
+        if !settings.recordHistory {
+            line("Nothing is sent while recording is off.")
+        }
+        line(listenBrainzStatus, color: listenBrainz.problem == nil ? Theme.secondary : Theme.danger)
+        if let fraction = listenBrainz.historyProgress, let h = saved.history {
+            progressLine(historyProgressText(h), fraction: fraction)
+        } else {
+            actionRow(saved.history?.finished == nil ? "Send earlier listens" : "Send earlier listens again") {
+                Task { await listenBrainz.sendHistory() }
+            }
+            if let h = saved.history, h.finished != nil {
+                line("Sent \(HistorySettingsModel.count(h.sent)) earlier \(h.sent == 1 ? "listen" : "listens").")
+            }
+        }
+    }
+
+    private var listenBrainzStatus: String {
+        let saved = listenBrainz.saved
+        var parts: [String] = []
+        if let problem = listenBrainz.problem {
+            parts.append(problem)
+            if let at = listenBrainz.retryAt { parts.append("Trying again \(Self.relative(at)).") }
+        }
+        if !saved.pending.isEmpty {
+            parts.append("\(HistorySettingsModel.count(saved.pending.count)) waiting to send.")
+        } else if parts.isEmpty {
+            parts.append(saved.sent > 0
+                ? "Sent \(HistorySettingsModel.count(saved.sent)) \(saved.sent == 1 ? "listen" : "listens")."
+                : "Songs you play from now on are sent.")
+        }
+        if !saved.refused.isEmpty {
+            parts.append("\(saved.refused.count) refused by ListenBrainz.")
+        }
+        return parts.joined(separator: " ")
+    }
+
+    private func historyProgressText(_ h: ListenBrainzSync.HistorySend) -> String {
+        var text = "Sending earlier listens: \(HistorySettingsModel.count(h.sent)) sent"
+        if let at = h.cursor?.startedAt {
+            text += ", up to \(HistorySettingsModel.monthYear(Date(timeIntervalSince1970: TimeInterval(at) / 1000)))"
+        }
+        return text
+    }
+
+    private static func relative(_ date: Date) -> String {
+        let seconds = max(0, Int(date.timeIntervalSinceNow.rounded()))
+        if seconds < 60 { return "in \(max(1, seconds)) s" }
+        return "in \((seconds + 59) / 60) min"
+    }
+
+    // MARK: Small parts
+
+    /// Grey text under a setting. Wraps rather than being cut off.
+    private func line(_ text: String, color: Color = Theme.secondary) -> some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundColor(color)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
+            .padding(.bottom, 4)
+    }
+
+    /// Text and a thin bar for something under way.
+    private func progressLine(_ text: String, fraction: Double?) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(text)
+                .font(.system(size: 12).monospacedDigit())
+                .foregroundColor(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.12))
+                    Capsule().fill(Theme.accent)
+                        .frame(width: geo.size.width * min(1, max(0, fraction ?? 0)))
+                }
+            }
+            .frame(height: 4)
+        }
+        .padding(.vertical, 4)
+        .padding(.bottom, 4)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// A small text button on the same surface as the segmented controls.
+    private func smallButton(_ title: String, color: Color = Theme.secondary,
+                             action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12))
+                .padding(.horizontal, 8)
+                .frame(height: 24)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.white.opacity(0.06)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(QuietButtonStyle(color: color, hover: .white))
+        .fixedSize()
+    }
+
 
     /// Width of the keycap column, so both shortcut lists line up.
     private static let keyColumn: CGFloat = 64
@@ -204,6 +506,8 @@ private enum Theme {
     static let secondary = Color(white: 0.70)
     static let muted = Color(white: 0.50)
     static let hairline = Color.white.opacity(0.08)
+    /// Deleting, and errors. A soft red that reads on the dark panel.
+    static let danger = Color(red: 0xFF / 255, green: 0x7A / 255, blue: 0x70 / 255)
     static let ease = Animation.easeOut(duration: 0.15)
 }
 
@@ -428,7 +732,8 @@ extension SettingsView {
     /// Renders the panel to a PNG next to the player snapshot, for CI.
     @MainActor
     static func renderSnapshot(to url: URL) {
-        let content = SettingsView()
+        let content = SettingsView(settings: snapshotSettings(), history: HistorySettingsModel.sample,
+                                   listenBrainz: ListenBrainzSync.preview(connection: .noToken))
             .padding(16)
             .frame(width: 300)
             .background(PlayerTheme.fallback)
@@ -440,5 +745,15 @@ extension SettingsView {
             return
         }
         try? NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:])?.write(to: url)
+    }
+
+    /// The app's defaults, in their own suite so a snapshot never changes the user's settings.
+    @MainActor
+    static func snapshotSettings(_ edit: (AppSettings) -> Void = { _ in }) -> AppSettings {
+        let suite = "tonearm.snapshot.settings"
+        UserDefaults.standard.removePersistentDomain(forName: suite)
+        let s = AppSettings(defaults: UserDefaults(suiteName: suite) ?? .standard)
+        edit(s)
+        return s
     }
 }

@@ -127,7 +127,17 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(s.layout, .large)
         XCTAssertFalse(s.globalShortcuts)
         XCTAssertFalse(s.notifyOnTrackChange)
-        XCTAssertFalse(s.recordHistory, "nothing is recorded before the app can show it and turn it off")
+        XCTAssertTrue(s.recordHistory, "Settings > History has the switch and says where the history is")
+        XCTAssertFalse(s.listenBrainz, "nothing leaves the Mac unless the user turns it on")
+    }
+
+    func testHistorySwitchesPersist() {
+        let s = AppSettings(defaults: defaults)
+        s.recordHistory = false
+        s.listenBrainz = true
+        let again = AppSettings(defaults: defaults)
+        XCTAssertFalse(again.recordHistory)
+        XCTAssertTrue(again.listenBrainz)
     }
 
     func testPersists() {
