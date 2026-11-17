@@ -7,7 +7,8 @@ import Foundation
 /// unless --db is given) and prints stats. Never touches the user's own history. With one
 /// period and one time zone, --json prints that `Stats`; with more, an object with the
 /// import result and `stats["<tz> <period>"]`. Timings go to stderr. Periods: week:2024-03-11,
-/// month:2024-03, year:2024, all. Default: all, in the Mac's time zone.
+/// month:2024-03, year:2024, all. Default: all, in the Mac's time zone. `--stats -` imports
+/// nothing and reads the --db as it is, so a new process can time its first stats.
 enum HistoryCLI {
     static func run(_ args: [String]) -> Int32 {
         var inputs: [URL] = []
@@ -17,6 +18,7 @@ enum HistoryCLI {
         var json = false
         var dbPath: String?
         var exportPath: String?
+        var readOnly = false
         var i = 0
         func value() -> String? {
             i += 1
@@ -26,7 +28,7 @@ enum HistoryCLI {
             switch args[i] {
             case "--stats":
                 guard let v = value() else { return fail("--stats needs a path") }
-                inputs.append(URL(fileURLWithPath: v))
+                if v == "-" { readOnly = true } else { inputs.append(URL(fileURLWithPath: v)) }
             case "--period":
                 guard let v = value() else { return fail("--period needs a value") }
                 for part in v.split(separator: ",") {
@@ -50,7 +52,11 @@ enum HistoryCLI {
             }
             i += 1
         }
-        guard !inputs.isEmpty else { return fail("--stats needs a path") }
+        if readOnly {
+            guard inputs.isEmpty, dbPath != nil else { return fail("--stats - reads --db and takes no other --stats") }
+        } else if inputs.isEmpty {
+            return fail("--stats needs a path")
+        }
         if periods.isEmpty { periods = [.allTime] }
         if zones.isEmpty { zones = [(TimeZone.current.identifier, .current)] }
 
@@ -74,9 +80,13 @@ enum HistoryCLI {
                 if let f = r.first, result.first.map({ f < $0 }) ?? true { result.first = f }
                 if let l = r.last, result.last.map({ l > $0 }) ?? true { result.last = l }
             }
-            let count = try store.sync { try $0.countNow() }
-            log("import: \(result.rows) rows from \(result.files) files, \(result.added) added, "
-                + "\(result.duplicates) duplicates, \(result.skipped) skipped, \(count) stored, \(ms(since: started)) ms")
+            // Not when only reading: counting would warm the cache before the first stats.
+            if !readOnly {
+                let count = try store.sync { try $0.countNow() }
+                log("import: \(result.rows) rows from \(result.files) files, \(result.added) added, "
+                    + "\(result.duplicates) duplicates, \(result.skipped) skipped, \(count) stored, "
+                    + "\(ms(since: started)) ms")
+            }
 
             var all: [String: Stats] = [:]
             var keys: [String] = []
