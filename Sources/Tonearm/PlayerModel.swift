@@ -560,6 +560,10 @@ final class PlayerModel: ObservableObject {
                 guard let self, self.artworkURL == url else { return }
                 if let image {
                     self.artworkCache[url] = ArtworkCache.Entry(image: image, colors: colors)
+                    // Kept beside the history, so Liner Notes shows it without fetching it again.
+                    if self.recorder != nil, self.settings.recordHistory, let data {
+                        HistoryStore.shared.covers.save(data, for: url.absoluteString)
+                    }
                 } else {
                     // Try again on a later read instead of never.
                     self.artworkFailure = (url, Date())

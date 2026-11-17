@@ -112,6 +112,52 @@ final class WordClampTests: XCTestCase {
     }
 }
 
+final class CoverStoreTests: XCTestCase {
+    private var dir: URL!
+
+    override func setUpWithError() throws {
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent("tonearm-covers-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    func testKeepsReadsAndDeletesWithTheHistory() async throws {
+        let store = HistoryStore(url: dir.appendingPathComponent("history.sqlite"))
+        let url = "https://i.scdn.co/image/ab67616d0000b273aaaa"
+        XCTAssertEqual(store.covers.directory, dir.appendingPathComponent("Covers", isDirectory: true))
+        let nothing = await store.covers.data(for: url)
+        XCTAssertNil(nothing)
+        store.covers.saveNow(Data([1, 2, 3]), for: url)
+        // The first copy stays.
+        store.covers.saveNow(Data([9]), for: url)
+        let kept = await store.covers.data(for: url)
+        XCTAssertEqual(kept, Data([1, 2, 3]))
+        XCTAssertEqual(CoverStore.fileName(for: url).count, 64)
+        try await store.deleteAll()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.covers.directory.path))
+        let gone = await store.covers.data(for: url)
+        XCTAssertNil(gone)
+    }
+
+    /// Liner Notes reads covers from disk and nothing else. A plain check of its source.
+    func testLinerNotesMakesNoNetworkRequests() throws {
+        let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("../../Sources/Tonearm/LinerNotes").standardizedFileURL
+        let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "swift" }
+        XCTAssertGreaterThan(files.count, 5)
+        for file in files {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            for word in ["URLSession", "URLRequest", "NSURLConnection", "dataTask", "Data(contentsOf: URL(string"] {
+                XCTAssertFalse(source.contains(word), "\(file.lastPathComponent) uses \(word)")
+            }
+        }
+    }
+}
+
 final class LinerArtTests: XCTestCase {
     func testTilesAreTheSameForTheSameName() {
         let a = NameTile.colors(for: "Кино"), b = NameTile.colors(for: "Кино")
