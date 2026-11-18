@@ -429,6 +429,31 @@ final class HistoryStoreTests: XCTestCase {
 
 /// The reads Settings > History and ListenBrainz use.
 final class HistoryStoreReadTests: XCTestCase {
+    /// Saving a play of a known track keeps the cached catalog; a new track drops it. Either
+    /// way the next stats are right.
+    func testStatsStayRightAsPlaysAreSaved() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tonearm-cat-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = HistoryStore(url: dir.appendingPathComponent("history.sqlite"))
+        let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+        func save(_ title: String, at i: Int) throws {
+            try store.sync {
+                try $0.saveNow(LiveListen(trackID: "spotify:track:\(title)", kind: .music, title: title, artist: "A",
+                                          album: "B", artworkURL: nil, durationMs: 100_000,
+                                          startedAt: t0.addingTimeInterval(Double(i) * 200),
+                                          endedAt: t0.addingTimeInterval(Double(i) * 200 + 60), msPlayed: 60_000))
+            }
+        }
+        try save("One", at: 0)
+        XCTAssertEqual(try store.sync { try $0.statsNow(for: .allTime, timeZone: .current) }.music.listens, 1)
+        try save("One", at: 1)
+        XCTAssertEqual(try store.sync { try $0.statsNow(for: .allTime, timeZone: .current) }.music.topTracks.map(\.listens), [2])
+        try save("Two", at: 2)
+        let s = try store.sync { try $0.statsNow(for: .allTime, timeZone: .current) }
+        XCTAssertEqual(s.music.topTracks.map(\.name), ["One", "Two"])
+        XCTAssertEqual(s.music.listens, 3)
+    }
+
     func testStoreSummaryAndMusicPages() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tonearm-sum-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -458,6 +483,11 @@ final class HistoryStoreReadTests: XCTestCase {
         let longest = try store.sync { try $0.longestPlaysNow() }
         XCTAssertEqual(Set(longest.values.map(\.longest)), [62_000, 63_000])
         XCTAssertEqual(longest.values.compactMap(\.finished), [], "live plays don't say how they ended")
+        // The launch warm-up reads the period the window opens on: this year, or the last one with plays.
+        let utc = TimeZone(identifier: "UTC")!
+        XCTAssertEqual(try store.sync { try $0.warmNow(timeZone: utc, now: t0) }, .year(2023))
+        XCTAssertEqual(try store.sync { try $0.warmNow(timeZone: utc, now: Date(timeIntervalSince1970: 1_800_000_000)) },
+                       .year(2023))
     }
 }
 

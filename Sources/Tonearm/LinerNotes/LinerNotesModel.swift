@@ -40,6 +40,7 @@ final class LinerNotesModel: ObservableObject {
     private let store: HistoryStore?
     private let fixedNow: Date?
     private var started = false
+    private var startedAt: Date?
     private var lastRefresh: Date?
     private var statsToken = 0
     private var loadingURLs = Set<String>()
@@ -81,6 +82,7 @@ final class LinerNotesModel: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
+        startedAt = Date()
         Task { await refresh() }
     }
 
@@ -107,8 +109,17 @@ final class LinerNotesModel: ObservableObject {
                 return
             }
             if !chosePeriod { period = defaultPeriod(kind: period.kind) }
-            if phase != .ready { phase = .ready }
-            await loadStats(dim: !quiet || stats == nil)
+            if stats == nil {
+                // The first stats: the placeholder page stays until they are in, so the
+                // header never sits over an empty page.
+                if phase != .loading { phase = .loading }
+                guard await loadStats(dim: false) else { return }
+                phase = .ready
+                logFirstPage()
+            } else {
+                if phase != .ready { phase = .ready }
+                await loadStats(dim: !quiet)
+            }
             if let index = try? await store.artwork(), index != artwork { artwork = index }
             loadImages()
         } catch {
@@ -118,28 +129,39 @@ final class LinerNotesModel: ObservableObject {
 
     /// This year when it has listens; otherwise the latest year that does.
     private func defaultPeriod(kind: Period.Kind) -> Period {
-        let current = Period.current(kind, now: now, timeZone: timeZone)
-        guard let last = years.last, !years.contains(today.year) else { return current }
-        return Period.of(kind, containing: LocalDay(year: last, month: 12, day: 31))
+        Period.opening(kind, years: years, now: now, timeZone: timeZone)
     }
 
-    private func loadStats(dim: Bool = true) async {
-        guard let store else { return }
+    /// True when these stats are the ones on the page now; false after an error, or when a
+    /// later load took over.
+    @discardableResult
+    private func loadStats(dim: Bool = true) async -> Bool {
+        guard let store else { return false }
         statsToken += 1
         let token = statsToken
         let wanted = period
         if dim { loadingStats = true }
         do {
             let s = try await store.stats(for: wanted, timeZone: timeZone)
-            guard token == statsToken else { return }
+            guard token == statsToken else { return false }
             if s != stats { stats = s }
             if loadingStats { loadingStats = false }
             loadImages()
+            return true
         } catch {
-            guard token == statsToken else { return }
+            guard token == statsToken else { return false }
             loadingStats = false
             phase = .failed(Self.message(error))
+            return false
         }
+    }
+
+    /// With `--log-windows` or `--open-liner-notes`: how long the first page took from the
+    /// window opening. scripts/liner-notes-live.sh prints it.
+    private func logFirstPage() {
+        guard let startedAt, LinerNotesWindow.logsWindows else { return }
+        let ms = Int(Date().timeIntervalSince(startedAt) * 1000)
+        FileHandle.standardError.write(Data("liner-notes-window: first page in \(ms) ms\n".utf8))
     }
 
     // MARK: Periods

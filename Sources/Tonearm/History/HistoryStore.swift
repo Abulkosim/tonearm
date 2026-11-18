@@ -114,6 +114,34 @@ final class HistoryStore: @unchecked Sendable {
         try await onQueueThrowing { try self.longestPlaysNow() }
     }
 
+    /// At launch: reads what the Liner Notes window reads when it opens, so the first open
+    /// finds the database open, the track catalog loaded and the file in the cache. On the
+    /// store's queue, at utility priority. Does nothing when there is no history file, so it
+    /// never makes one.
+    func warm(timeZone: TimeZone = .current) {
+        queue.async {
+            guard FileManager.default.fileExists(atPath: self.url.path) else { return }
+            do {
+                try self.warmNow(timeZone: timeZone)
+            } catch {
+                NSLog("Tonearm: could not read the history at launch: %@", "\(error)")
+            }
+        }
+    }
+
+    /// The reads behind `warm`, on the calling thread: the years, the count, the covers,
+    /// and the stats of the period the window opens on. Returns that period.
+    @discardableResult
+    func warmNow(timeZone: TimeZone, now: Date = Date()) throws -> Period? {
+        let years = try yearsNow(timeZone: timeZone)
+        _ = try countNow()
+        _ = try artworkNow()
+        guard !years.isEmpty else { return nil }
+        let period = Period.opening(.year, years: years, now: now, timeZone: timeZone)
+        _ = try statsNow(for: period, timeZone: timeZone)
+        return period
+    }
+
     // MARK: Live recording
 
     /// Stores or updates a listen Tonearm heard. Writes are queued in order. A failed write
@@ -427,6 +455,9 @@ final class HistoryStore: @unchecked Sendable {
             ms_played = excluded.ms_played
         WHERE listens.source = 0
         """, [.int(track), .int(startMs), .int(endMs), .int(listen.msPlayed), .int(listen.dedupKey)])
+        // A track the catalog already has keeps its names, so the catalog stays good. Only a
+        // new one needs it read again. Saves come often while music plays.
+        if let c = catalogCache, track >= 0, Int(track) < c.kind.count, c.kind[Int(track)] >= 0 { return }
         catalogCache = nil
     }
 

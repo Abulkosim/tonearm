@@ -77,6 +77,9 @@ sleep 3
 opened="$(windows)"
 echo "Windows with --open-liner-notes: ${opened:-none}"
 echo "The app's line: ${opened_line:-none}"
+# How long the window took to show its first page, the store warmed at launch. Not gated.
+first_page="$(grep '^liner-notes-window: first page' "$window_log" | tail -n 1 || true)"
+echo "First page: ${first_page:-not logged}"
 screencapture -x "$out/live-window.png" || echo "::warning::screencapture failed"
 pgrep -x Tonearm > /dev/null || fail "Tonearm exited with the Liner Notes window open"
 pkill -x Tonearm || true

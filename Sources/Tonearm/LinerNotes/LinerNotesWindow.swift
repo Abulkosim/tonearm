@@ -103,8 +103,10 @@ enum LinerNotesWindow {
     /// With `--open-liner-notes` or `--log-windows`, one line on stderr per window this
     /// code sees: its identifier, its size, and whether the player's window tracking would
     /// take it for the popover. scripts/liner-notes-live.sh reads these.
+    static var logsWindows: Bool { openAtLaunch || CommandLine.arguments.contains("--log-windows") }
+
     private static func log(_ event: String, _ w: NSWindow) {
-        guard openAtLaunch || CommandLine.arguments.contains("--log-windows") else { return }
+        guard logsWindows else { return }
         let id = w.identifier?.rawValue ?? "none"
         let popover = PlayerModel.isPopoverWindow(className: w.className,
                                                   classBundleID: Bundle(for: type(of: w)).bundleIdentifier,
