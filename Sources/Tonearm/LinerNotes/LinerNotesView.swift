@@ -651,8 +651,8 @@ struct EmptyHistory: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 12)
             VStack(alignment: .leading, spacing: 8) {
-                step(1, "On spotify.com, open Account › Privacy, and under Download your data ask for your extended streaming history.", p)
-                step(2, "Spotify emails you a .zip, in a few days or up to a month. Choose it here.", p)
+                step(1, "On spotify.com, open Account › Privacy, and under Download your data ask for both: account data, the past year, ready in a few days; and extended streaming history, every year, ready in up to 30 days.", p)
+                step(2, "Spotify emails each as a .zip. Import whichever comes first, and the other when it arrives. A play in both counts once.", p)
             }
             .padding(.top, 20)
             Button("Import your Spotify history", action: model.chooseImport)
