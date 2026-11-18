@@ -245,8 +245,6 @@ struct WelcomeView: View {
             VStack(alignment: .leading, spacing: 8) {
                 note(title: "Don't see it?",
                      text: "Your menu bar may be full; hold ⌘ and drag other icons out, or quit a few menu bar apps")
-                note(title: "What you play stays on this Mac",
-                     text: "Tonearm keeps a private record of it for Liner Notes, the chart button next to the gear (⌘L); turn it off in Settings › History")
                 if !spotifyInstalled {
                     note(title: "Spotify isn't installed",
                          text: "Tonearm works with the Spotify desktop app") {
@@ -258,6 +256,15 @@ struct WelcomeView: View {
                 }
             }
             .padding(.top, 16)
+
+            // Recording is on from the start, so a new install hears it here.
+            Text("What you play is kept on this Mac only, for Liner Notes (⌘L). Settings › History turns it off.")
+                .font(.system(size: 12))
+                .foregroundColor(PlayerTheme.textSecondary)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 14)
 
             PlayerTheme.hairline
                 .frame(height: 1)
