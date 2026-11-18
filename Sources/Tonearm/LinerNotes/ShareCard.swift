@@ -170,7 +170,7 @@ struct ShareSheet: View {
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(p.hairline))
 
-            Text(problem ?? saved ?? "1080 × 1350, for a post or a story")
+            Text(problem ?? saved ?? "1080 × 1350, the size of a portrait post")
                 .font(.system(size: 12))
                 .foregroundColor(p.secondary)
                 .lineLimit(2)
