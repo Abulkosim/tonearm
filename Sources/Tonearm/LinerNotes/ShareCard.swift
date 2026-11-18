@@ -110,7 +110,7 @@ struct ShareCard: View {
     /// The card for what the model shows now.
     @MainActor
     static func make(_ model: LinerNotesModel) -> ShareCard? {
-        guard let s = model.stats, s.music.ms > 0 else { return nil }
+        guard let s = model.stats, s.music.listens > 0 else { return nil }
         return ShareCard(stats: s, periodTitle: LinerFormat.title(model.period, timeZone: model.timeZone),
                          albumImage: model.topAlbumImage, albumName: model.topAlbumName, sleeve: model.sleeve)
     }

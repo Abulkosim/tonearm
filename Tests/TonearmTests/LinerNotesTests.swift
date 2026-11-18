@@ -287,4 +287,26 @@ final class LinerNotesModelTests: XCTestCase {
         late.select(year: 2025)
         XCTAssertEqual(late.period, .month(year: 2025, month: 11))
     }
+
+    /// A period with no plays says what it had instead of "Nothing played".
+    func testPeriodWithoutPlaysSaysWhatWasThere() {
+        let when = "in October 2025"
+        var podcasts = Stats(period: "month:2025-10")
+        podcasts.podcasts.ms = 52 * 60_000
+        podcasts.podcasts.topShows = [Stats.Item(name: "The Long Talk", artist: nil, ms: 40 * 60_000, listens: 2)]
+        XCTAssertEqual(LinerNotesView.emptyPeriodTitle(podcasts, when), "Only podcasts in October 2025")
+        XCTAssertEqual(LinerNotesView.emptyPeriodContents(podcasts),
+                       "52 min of podcasts, mostly The Long Talk. Liner Notes counts music.")
+        var short = Stats(period: "month:2025-10")
+        short.music.ms = 20_000
+        XCTAssertEqual(LinerNotesView.emptyPeriodTitle(short, when), "Only short plays in October 2025")
+        XCTAssertEqual(LinerNotesView.emptyPeriodContents(short),
+                       "Under a minute of songs stopped before 30 seconds. A song counts as a play from 30 seconds.")
+        var both = short
+        both.podcasts = podcasts.podcasts
+        XCTAssertEqual(LinerNotesView.emptyPeriodTitle(both, when), "Only short plays and podcasts in October 2025")
+        let nothing = Stats(period: "month:2025-10")
+        XCTAssertEqual(LinerNotesView.emptyPeriodTitle(nothing, when), "Nothing played in October 2025")
+        XCTAssertNil(LinerNotesView.emptyPeriodContents(nothing))
+    }
 }
