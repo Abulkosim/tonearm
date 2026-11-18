@@ -82,6 +82,9 @@ enum LinerFormat {
 
     static func minutesText(_ ms: Int64) -> String { "\(number(minutes(ms))) min" }
 
+    /// "12 min", or "under a minute" for less than one.
+    static func roughMinutes(_ ms: Int64) -> String { ms < 60_000 ? "under a minute" : minutesText(ms) }
+
     static func plays(_ n: Int) -> String { n == 1 ? "1 play" : "\(number(n)) plays" }
 
     /// "1,204 min · 312 plays"

@@ -112,6 +112,19 @@ enum LinerNotesSnapshot {
                   dark: dark)
             write("nothing-played-\(look)", window(model(.week(LocalDay(year: years[0] - 1, month: 6, day: 3)))),
                   dark: dark)
+            // Periods with no plays but something in them.
+            let week = Period.week(LocalDay(year: last, month: 10, day: 15))
+            var podcasts = Stats(period: week.description)
+            podcasts.podcasts.ms = 52 * 60_000
+            podcasts.podcasts.listens = 3
+            podcasts.podcasts.topShows = [Stats.Item(name: "The Long Talk", artist: nil, ms: 40 * 60_000, listens: 2)]
+            var short = Stats(period: week.description)
+            short.music.ms = 4 * 60_000 + 20_000
+            var both = short
+            both.podcasts = podcasts.podcasts
+            write("only-podcasts-\(look)", window(model(week, podcasts)), dark: dark)
+            write("only-short-plays-\(look)", window(model(week, short)), dark: dark)
+            write("only-short-plays-and-podcasts-\(look)", window(model(week, both)), dark: dark)
             let shareModel = model(year)
             if let card = ShareCard.make(shareModel)?.render() {
                 let sheet = ShareSheet(model: shareModel, image: NSImage(cgImage: card, size: ShareCard.size)) {}

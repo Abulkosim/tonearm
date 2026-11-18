@@ -101,7 +101,7 @@ struct LinerNotesView: View {
                 .accessibilityLabel("Import Spotify history")
             Button("Share") { sharing = true }
                 .buttonStyle(LinerButtonStyle(kind: .primary))
-                .disabled(model.stats.map { $0.music.ms == 0 } ?? true)
+                .disabled(model.stats.map { $0.music.listens == 0 } ?? true)
                 .help("Make an image of this period to save or send")
         }
         .padding(.horizontal, Self.gutter - 6)
@@ -126,7 +126,8 @@ struct LinerNotesView: View {
     private var page: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let s = model.stats {
-                if s.music.ms == 0 {
+                // No play of 30 s or more: a page of zeros would say nothing.
+                if s.music.listens == 0 {
                     emptyPeriod(s)
                 } else {
                     hero(s)
@@ -461,9 +462,10 @@ struct LinerNotesView: View {
 
     private func emptyPeriod(_ s: Stats) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Nothing played \(LinerFormat.inPeriod(model.period, timeZone: tz))")
+            Text(Self.emptyPeriodTitle(s, LinerFormat.inPeriod(model.period, timeZone: tz)))
                 .font(LinerType.serif(28))
                 .foregroundColor(p.primary)
+                .fixedSize(horizontal: false, vertical: true)
             Text(emptyPeriodDetail(s))
                 .font(.system(size: 14))
                 .foregroundColor(p.secondary)
@@ -492,10 +494,36 @@ struct LinerNotesView: View {
         return target
     }
 
-    private func emptyPeriodDetail(_ s: Stats) -> String {
-        if s.podcasts.ms > 0 {
-            return "Only podcasts: \(LinerFormat.minutesText(s.podcasts.ms)). Liner Notes counts music."
+    /// A period with no plays says what it does have: "Only podcasts in October 2025".
+    static func emptyPeriodTitle(_ s: Stats, _ when: String) -> String {
+        switch (s.music.ms > 0, s.podcasts.ms > 0) {
+        case (true, true): return "Only short plays and podcasts \(when)"
+        case (true, false): return "Only short plays \(when)"
+        case (false, true): return "Only podcasts \(when)"
+        case (false, false): return "Nothing played \(when)"
         }
+    }
+
+    /// What was there, when something was. Nil for a period with nothing at all.
+    static func emptyPeriodContents(_ s: Stats) -> String? {
+        var parts: [String] = []
+        if s.music.ms > 0 {
+            parts.append("\(LinerFormat.roughMinutes(s.music.ms)) of songs stopped before 30 seconds")
+        }
+        if s.podcasts.ms > 0 {
+            var line = "\(LinerFormat.roughMinutes(s.podcasts.ms)) of podcasts"
+            if let show = s.podcasts.topShows.first?.name, !show.isEmpty { line += ", mostly \(show)" }
+            parts.append(line)
+        }
+        guard !parts.isEmpty else { return nil }
+        let sentence = parts.joined(separator: ", and ")
+        let capitalized = sentence.prefix(1).uppercased() + String(sentence.dropFirst())
+        let rule = s.music.ms > 0 ? "A song counts as a play from 30 seconds." : "Liner Notes counts music."
+        return "\(capitalized). \(rule)"
+    }
+
+    private func emptyPeriodDetail(_ s: Stats) -> String {
+        if let contents = Self.emptyPeriodContents(s) { return contents }
         if beforeHistory, let first = model.years.first {
             return "Your history starts in \(first)."
         }
