@@ -36,8 +36,8 @@ struct LinerNotesView: View {
                 LinerPlaceholder(palette: p)
             case .empty:
                 centered { EmptyHistory(model: model) }
-            case .failed(let message):
-                centered { failure(message) }
+            case .failed(let problem):
+                centered { failure(problem) }
             case .ready:
                 VStack(spacing: 0) {
                     header
@@ -504,19 +504,28 @@ struct LinerNotesView: View {
             : "Record listening is off in Settings › History, so new plays aren’t written down. Older periods still show what you imported."
     }
 
-    private func failure(_ message: String) -> some View {
+    /// What went wrong and the one thing that helps: an update for a history from a newer
+    /// Tonearm, where trying again would only fail again, or another try for the rest.
+    private func failure(_ problem: HistoryWords.Problem) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Can’t read your listening history")
+            Text(problem.title)
                 .font(LinerType.serif(28))
                 .foregroundColor(p.primary)
-            Text(message)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(problem.detail)
                 .font(.system(size: 13))
                 .foregroundColor(p.secondary)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("Try again") { Task { await model.refresh() } }
-                .buttonStyle(LinerButtonStyle())
-                .padding(.top, 8)
+            if problem.needsUpdate {
+                Button("Check for Updates…") { Updater.shared.checkForUpdates() }
+                    .buttonStyle(LinerButtonStyle(kind: .primary))
+                    .padding(.top, 8)
+            } else {
+                Button("Try again") { Task { await model.refresh() } }
+                    .buttonStyle(LinerButtonStyle())
+                    .padding(.top, 8)
+            }
         }
         .frame(maxWidth: 480, alignment: .leading)
     }

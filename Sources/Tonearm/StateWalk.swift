@@ -328,6 +328,11 @@ enum StateWalk {
                 $0.listenBrainz = true
                 $0.recordHistory = false
             }, limit: nil)
+        add("settings-history-newer", "History: the database is from a newer Tonearm",
+            panel(.preview(summary: nil, note: HistorySettingsModel.Note(
+                action: .imported, text: HistoryWords.problem(HistoryError.newerSchema(2)).short, isError: true)),
+                  .preview(connection: .noToken)),
+            limit: nil)
         add("settings-large-history", "Settings, 1440 x 900 screen, scrolled to History",
             pop(playing(Samples.song), screen: WalkScreen.large) {
                 $0.settingsOpen = true

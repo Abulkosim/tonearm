@@ -126,6 +126,24 @@ final class HistoryStoreTests: XCTestCase {
         }
     }
 
+    /// A database from a newer Tonearm is left alone, and the words say to update, not to try again.
+    func testNewerSchemaAsksForAnUpdate() throws {
+        let url = dir.appendingPathComponent("newer/history.sqlite")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try SQLiteDB(path: url.path).exec("PRAGMA user_version = \(HistoryStore.schemaVersion + 1)")
+        let s = HistoryStore(url: url)
+        XCTAssertThrowsError(try s.sync { try $0.countNow() }) { error in
+            XCTAssertEqual(error as? HistoryError, .newerSchema(HistoryStore.schemaVersion + 1))
+            let problem = HistoryWords.problem(error)
+            XCTAssertTrue(problem.needsUpdate)
+            XCTAssertTrue(problem.detail.contains("Update Tonearm"), problem.detail)
+            XCTAssertTrue(problem.detail.hasSuffix("."), problem.detail)
+        }
+        let other = HistoryWords.problem(SQLiteError.step("disk I/O error"))
+        XCTAssertFalse(other.needsUpdate)
+        XCTAssertEqual(other.detail, "History database error: disk I/O error.")
+    }
+
     func testAccountDataAndExtendedHistoryOfTheSamePlaysCountOnce() throws {
         // Account data has the end time to the minute and no album; extended history wins.
         let account = """

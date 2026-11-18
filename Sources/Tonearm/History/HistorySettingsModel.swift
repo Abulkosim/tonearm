@@ -65,7 +65,7 @@ final class HistorySettingsModel: ObservableObject {
                 summary = try await store.summary()
             } catch {
                 summary = nil
-                note = Note(action: .imported, text: "Can't read the history: \(error)", isError: true)
+                note = Note(action: .imported, text: HistoryWords.problem(error).short, isError: true)
             }
         }
     }
@@ -105,7 +105,8 @@ final class HistorySettingsModel: ObservableObject {
             }
             note = Note(action: .imported, text: HistoryWords.importNote(result, plays: plays))
         } catch {
-            note = Note(action: .imported, text: "\(error)", isError: true)
+            note = Note(action: .imported, text: (error as? ImportError)?.description ?? HistoryWords.problem(error).short,
+                        isError: true)
         }
         isImporting = false
         progress = nil

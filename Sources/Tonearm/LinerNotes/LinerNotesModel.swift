@@ -12,7 +12,7 @@ final class LinerNotesModel: ObservableObject {
         /// No listens at all: the import screen.
         case empty
         case ready
-        case failed(String)
+        case failed(HistoryWords.Problem)
     }
 
     enum ImportState: Equatable {
@@ -123,7 +123,7 @@ final class LinerNotesModel: ObservableObject {
             if let index = try? await store.artwork(), index != artwork { artwork = index }
             loadImages()
         } catch {
-            phase = .failed(Self.message(error))
+            phase = .failed(HistoryWords.problem(error))
         }
     }
 
@@ -151,7 +151,7 @@ final class LinerNotesModel: ObservableObject {
         } catch {
             guard token == statsToken else { return false }
             loadingStats = false
-            phase = .failed(Self.message(error))
+            phase = .failed(HistoryWords.problem(error))
             return false
         }
     }
@@ -311,6 +311,6 @@ final class LinerNotesModel: ObservableObject {
 
     static func message(_ error: Error) -> String {
         if let e = error as? ImportError { return e.description }
-        return "\(error)"
+        return HistoryWords.problem(error).detail
     }
 }
