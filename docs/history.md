@@ -2,6 +2,8 @@
 
 Tonearm keeps a record of what you play in Spotify. Liner Notes uses it to show your listening for a week, a month, a year or all time. The record stays on your Mac. There is no account and no login.
 
+To open Liner Notes, click the chart button next to the gear in the player, or press ⌘L while the player is open. Settings → History → Open Liner Notes does the same.
+
 The switch is in Settings → History → Record listening. It is on by default.
 
 ## What is recorded

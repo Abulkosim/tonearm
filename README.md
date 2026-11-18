@@ -61,13 +61,14 @@ While the player is open:
 | ↑ ↓ | Volume |
 | S, R | Shuffle, repeat |
 | ⌘, | Settings |
+| ⌘L | Liner Notes |
 | ⌘Q | Quit |
 
 Global shortcuts, if you turn them on in settings: ⌃⌥P play or pause, ⌃⌥N next, ⌃⌥B previous.
 
 ## History
 
-Tonearm keeps a record of what you play, on your Mac, for Liner Notes. To start with years of history instead of none, ask Spotify for your data (Account → Privacy → Download your data) and import the .zip in Settings → History. From there you can also export everything as CSV or JSON, delete it all, or turn recording off.
+Tonearm keeps a record of what you play, on your Mac, for Liner Notes: your listening by week, month, year or all time. To open it, click the chart button next to the gear in the player, or press ⌘L. To start with years of history instead of none, ask Spotify for your data (Account → Privacy → Download your data) and import the .zip in Settings → History. From there you can also export everything as CSV or JSON, delete it all, or turn recording off.
 
 If you use [ListenBrainz](https://listenbrainz.org), Tonearm can send your listens there too. That is off until you paste your token. Details in [docs/history.md](docs/history.md).
 
