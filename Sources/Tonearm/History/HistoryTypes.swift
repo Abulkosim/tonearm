@@ -176,6 +176,14 @@ enum Period: Hashable, CustomStringConvertible {
         }
     }
 
+    /// The period Liner Notes opens on: the one of `kind` holding today when this year has
+    /// listens, else the one at the end of the latest year that does.
+    static func opening(_ kind: Kind, years: [Int], now: Date = Date(), timeZone: TimeZone = .current) -> Period {
+        let current = Period.current(kind, now: now, timeZone: timeZone)
+        guard let last = years.last, !years.contains(LocalDay(now, timeZone: timeZone).year) else { return current }
+        return Period.of(kind, containing: LocalDay(year: last, month: 12, day: 31))
+    }
+
     /// The days covered, end exclusive. Nil for all time.
     var days: Range<LocalDay>? {
         switch self {

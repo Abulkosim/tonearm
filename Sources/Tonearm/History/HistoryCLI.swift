@@ -8,7 +8,8 @@ import Foundation
 /// period and one time zone, --json prints that `Stats`; with more, an object with the
 /// import result and `stats["<tz> <period>"]`. Timings go to stderr. Periods: week:2024-03-11,
 /// month:2024-03, year:2024, all. Default: all, in the Mac's time zone. `--stats -` imports
-/// nothing and reads the --db as it is, so a new process can time its first stats.
+/// nothing and reads the --db as it is, so a new process can time its first stats. --warm
+/// first does what the app does at launch (`HistoryStore.warmNow`) and times it.
 enum HistoryCLI {
     static func run(_ args: [String]) -> Int32 {
         var inputs: [URL] = []
@@ -19,6 +20,7 @@ enum HistoryCLI {
         var dbPath: String?
         var exportPath: String?
         var readOnly = false
+        var warm = false
         var i = 0
         func value() -> String? {
             i += 1
@@ -43,6 +45,8 @@ enum HistoryCLI {
                 }
             case "--json":
                 json = true
+            case "--warm":
+                warm = true
             case "--db":
                 dbPath = value()
             case "--export":
@@ -86,6 +90,13 @@ enum HistoryCLI {
                 log("import: \(result.rows) rows from \(result.files) files, \(result.added) added, "
                     + "\(result.duplicates) duplicates, \(result.skipped) skipped, \(count) stored, "
                     + "\(ms(since: started)) ms")
+            }
+
+            // What the app does at launch, before the first Liner Notes window.
+            if warm, let zone = zones.first?.zone {
+                started = DispatchTime.now()
+                _ = try store.sync { try $0.warmNow(timeZone: zone) }
+                log("warm: \(ms(since: started)) ms")
             }
 
             var all: [String: Stats] = [:]

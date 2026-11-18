@@ -104,6 +104,7 @@ enum LinerNotesSnapshot {
             for (name, period) in periods {
                 write("page-\(name)-\(look)", page(model(period)), dark: dark)
             }
+            write("loading-\(look)", window(model(year, phase: .loading)), dark: dark)
             write("empty-\(look)", window(model(.allTime, phase: .empty)), dark: dark)
             write("importing-\(look)", window(model(.allTime, phase: .empty, importState: .running(
                 filesDone: 3, filesTotal: 7, rowsRead: 31_208))), dark: dark)

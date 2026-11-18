@@ -33,7 +33,7 @@ struct LinerNotesView: View {
         } else {
             switch model.phase {
             case .loading:
-                Color.clear
+                LinerPlaceholder(palette: p)
             case .empty:
                 centered { EmptyHistory(model: model) }
             case .failed(let message):
@@ -519,6 +519,76 @@ struct LinerNotesView: View {
                 .padding(.top, 8)
         }
         .frame(maxWidth: 480, alignment: .leading)
+    }
+}
+
+/// The window while the first stats load: the page's shape in still, muted blocks. No
+/// spinner, so a quick load reads as the page arriving and a slow one as the page on its way.
+struct LinerPlaceholder: View {
+    var palette: LinerPalette
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                block(48, 20)
+                block(112, 22)
+                Spacer(minLength: 16)
+                block(232, 28)
+                block(28, 28)
+                block(64, 28)
+            }
+            .padding(.horizontal, LinerNotesView.gutter)
+            .frame(height: 56)
+            Rectangle().fill(palette.hairline).frame(height: 1)
+            VStack(alignment: .leading, spacing: 0) {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(palette.raised)
+                    .frame(height: 264)
+                block(120, 14)
+                    .padding(.top, 48)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(palette.emptyCell)
+                    .frame(height: 168)
+                    .padding(.top, 16)
+                HStack(alignment: .top, spacing: 48) {
+                    list
+                    list
+                }
+                .padding(.top, 48)
+            }
+            .padding(.horizontal, LinerNotesView.gutter)
+            .padding(.top, 28)
+            .frame(maxWidth: LinerNotesView.maxContentWidth, alignment: .leading)
+            .frame(maxWidth: .infinity)
+        }
+        // Any window height: the blocks run off the bottom instead of making the window taller.
+        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
+        .clipped()
+        .accessibilityElement()
+        .accessibilityLabel("Loading your listening")
+    }
+
+    private func block(_ width: CGFloat, _ height: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 4, style: .continuous)
+            .fill(palette.raised)
+            .frame(width: width, height: height)
+    }
+
+    private var list: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            block(96, 14)
+            ForEach(0..<4, id: \.self) { _ in
+                HStack(spacing: 12) {
+                    block(40, 40)
+                    VStack(alignment: .leading, spacing: 8) {
+                        block(168, 10)
+                        block(96, 8)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

@@ -495,12 +495,20 @@ def cmd_bench(a):
         purged = subprocess.run(["sudo", "-n", "/usr/sbin/purge"], capture_output=True).returncode == 0
         _, err, _ = run_tonearm(a.app, ["--stats", "-", "--db", db] + periods)
         st = timing(err, "stats ")
-        results[target] = (imp, st, stored)
+        # The same new process, after what the app does at launch off the main thread
+        # (HistoryStore.warmNow), as when someone opens Liner Notes a while after launch.
+        if purged:
+            subprocess.run(["sudo", "-n", "/usr/sbin/purge"], capture_output=True)
+        _, err, _ = run_tonearm(a.app, ["--stats", "-", "--db", db, "--warm"] + periods)
+        warm_ms = timing(err, "warm:")[0]
+        warmed = timing(err, "stats ")[0]
+        results[target] = (imp, st, stored, warm_ms, warmed)
         print("%d listens: import %d ms; all-time stats in the importing process %d ms; in a new process%s %s ms; "
-              "year 2024 %d ms" % (stored, imp, after_import, " after purge" if purged else " (purge not allowed)",
-                                   ", ".join(map(str, st[:3])), st[3]))
-    import_ms, _, n_import = results[100_000]
-    _, st, n_stats = results[200_000]
+              "year 2024 %d ms; first call after the launch warm-up %d ms (warm-up %d ms)"
+              % (stored, imp, after_import, " after purge" if purged else " (purge not allowed)",
+                 ", ".join(map(str, st[:3])), st[3], warmed, warm_ms))
+    import_ms, _, n_import, _, _ = results[100_000]
+    _, st, n_stats, warm_ms, warmed = results[200_000]
 
     # The import users run: the 100k folder as a zip, unpacked first. Measured, not gated.
     zip_path = os.path.join(a.work, "bench-100000.zip")
@@ -517,8 +525,9 @@ def cmd_bench(a):
 
     ok = import_ms < 5000 and min(st[:3]) < 300
     line = ("Liner Notes speed: import of %d listens %d ms (limit 5000 for 100k; %d ms from a zip, no limit), "
-            "all-time stats on %d listens %d ms warm (limit 300), %d ms first call in a new process (no limit)"
-            % (n_import, import_ms, zip_ms, n_stats, min(st[:3]), st[0]))
+            "all-time stats on %d listens %d ms warm (limit 300), %d ms first call in a new process (no limit), "
+            "%d ms first call after the launch warm-up (warm-up %d ms, no limit)"
+            % (n_import, import_ms, zip_ms, n_stats, min(st[:3]), st[0], warmed, warm_ms))
     print(line)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:

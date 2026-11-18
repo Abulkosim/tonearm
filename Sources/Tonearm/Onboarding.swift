@@ -10,6 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // A first launch hears about the listening record in the welcome window; an update, in the player.
         HistoryNotice.shared.launched(firstLaunch: !Onboarding.welcomeShown)
+        // Off the main thread, so the first Liner Notes window opens on a warm store.
+        HistoryStore.shared.warm()
         guard !Onboarding.welcomeShown else { return }
         // Give the status item a moment to appear, so the window can sit under it.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
