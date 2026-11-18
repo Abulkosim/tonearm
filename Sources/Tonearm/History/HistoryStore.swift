@@ -202,7 +202,7 @@ final class HistoryStore: @unchecked Sendable {
         try d.exec("PRAGMA foreign_keys = ON")
         let version = try d.int("PRAGMA user_version") ?? 0
         if version > schemaVersion {
-            throw SQLiteError.open("history.sqlite is from a newer Tonearm (schema \(version))")
+            throw HistoryError.newerSchema(version)
         }
         if version < 1 {
             try d.transaction {

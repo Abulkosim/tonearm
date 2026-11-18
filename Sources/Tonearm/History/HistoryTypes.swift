@@ -288,6 +288,18 @@ enum ImportError: Error, CustomStringConvertible {
     }
 }
 
+enum HistoryError: Error, Equatable, CustomStringConvertible {
+    /// history.sqlite was written by a newer Tonearm, in a layout this one doesn't know. It
+    /// is left alone; the newer Tonearm reads it.
+    case newerSchema(Int64)
+
+    var description: String {
+        switch self {
+        case .newerSchema(let v): return "history.sqlite is from a newer Tonearm (schema \(v))."
+        }
+    }
+}
+
 enum ExportFormat: String, CaseIterable {
     case csv, json
 }

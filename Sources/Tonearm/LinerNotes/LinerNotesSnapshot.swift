@@ -120,7 +120,10 @@ enum LinerNotesSnapshot {
         }
         write("import-failed-dark", window(model(.allTime, phase: .empty, importState: .failed(
             ImportError.noHistoryFiles.description))), dark: true)
-        write("failed-dark", window(model(year, phase: .failed("history.sqlite is from a newer Tonearm (schema 2)"))), dark: true)
+        write("failed-newer-dark", window(model(year, phase: .failed(HistoryWords.problem(HistoryError.newerSchema(2))))),
+              dark: true)
+        write("failed-unreadable-dark", window(model(year, phase: .failed(HistoryWords.problem(
+            SQLiteError.step("disk I/O error"))))), dark: true)
         write("page-year-covers-dark", page(model(year, artwork: artIndex, images: artImages)), dark: true)
         write("page-long-names-dark", page(model(year, longStats)), dark: true)
         write("page-long-names-light", page(model(year, longStats)), dark: false)

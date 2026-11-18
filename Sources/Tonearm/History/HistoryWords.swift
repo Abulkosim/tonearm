@@ -16,6 +16,35 @@ enum HistoryWords {
         return "\(LinerFormat.plays(plays)) and \(LinerFormat.number(other)) other \(other == 1 ? "entry" : "entries")"
     }
 
+    // MARK: Problems
+
+    /// Why the history can't be read, and what helps.
+    struct Problem: Equatable {
+        var title: String
+        var detail: String
+        /// One line, for Settings.
+        var short: String
+        /// Updating Tonearm fixes it; trying again doesn't.
+        var needsUpdate = false
+    }
+
+    static func problem(_ error: Error) -> Problem {
+        if case HistoryError.newerSchema = error {
+            return Problem(
+                title: "Your history needs a newer Tonearm",
+                detail: "A newer version of Tonearm wrote history.sqlite, and this one can’t read it. "
+                    + "Update Tonearm to see your listening again. Nothing has been changed or lost.",
+                short: "This history is from a newer Tonearm. Update Tonearm to read it.",
+                needsUpdate: true)
+        }
+        // A full disk, a busy or unreadable file: these can pass.
+        var text = "\(error)"
+        if let first = text.first { text = first.uppercased() + text.dropFirst() }
+        if !text.hasSuffix(".") { text += "." }
+        return Problem(title: "Can’t read your listening history", detail: text,
+                       short: "Can’t read the history. \(text)")
+    }
+
     // MARK: Import
 
     static func importHeadline(_ r: ImportResult, plays: Int) -> String {
