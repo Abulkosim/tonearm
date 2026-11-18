@@ -48,6 +48,19 @@ final class HistoryStore: @unchecked Sendable {
         try await onQueueThrowing { try self.importNow(urls: urls, progress: progress) }
     }
 
+    /// Imports, and counts the plays the import added: music of 30 s or more, the number
+    /// Liner Notes and Settings call plays. `ImportResult.added` also counts short plays and
+    /// podcast episodes, and a live listen the export replaced is not a new play.
+    func importCountingPlays(urls: [URL], progress: ((ImportProgress) -> Void)? = nil) async throws
+        -> (result: ImportResult, plays: Int) {
+        try await onQueueThrowing {
+            let before = try self.playCountNow()
+            let result = try self.importNow(urls: urls, progress: progress)
+            let after = try self.playCountNow()
+            return (result, max(0, after - before))
+        }
+    }
+
     /// Stats for `period` in `timeZone`. Throws if the database can't be read, so "no
     /// history" and "history unreadable" look different.
     func stats(for period: Period, timeZone: TimeZone = .current) async throws -> Stats {
@@ -84,7 +97,7 @@ final class HistoryStore: @unchecked Sendable {
         try await onQueueThrowing { try self.deleteAllNow() }
     }
 
-    /// How many listens there are, and the first and last start time. For settings.
+    /// How many entries and plays there are, and the first and last start time. For settings.
     func summary() async throws -> HistorySummary {
         try await onQueueThrowing { try self.summaryNow() }
     }
@@ -432,11 +445,17 @@ final class HistoryStore: @unchecked Sendable {
     }
 
     func summaryNow() throws -> HistorySummary {
-        let s = try db().prepare("SELECT COUNT(*), MIN(started_at), MAX(started_at) FROM listens")
-        s.bind([])
+        // Plays by the same rule as playCountNow.
+        let s = try db().prepare("""
+        SELECT COUNT(*), MIN(l.started_at), MAX(l.started_at),
+               COALESCE(SUM(CASE WHEN t.kind >= 0 AND t.kind != 1 AND l.ms_played >= ?1 THEN 1 ELSE 0 END), 0)
+        FROM listens l JOIN tracks t ON t.id = l.track_id
+        """)
+        s.bind([.int(StatsEngine.listenThresholdMs)])
         guard try s.step() else { return HistorySummary() }
         func date(_ ms: Int64?) -> Date? { ms.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000) } }
-        let summary = HistorySummary(count: Int(s.int(0)), first: date(s.optionalInt(1)), last: date(s.optionalInt(2)))
+        let summary = HistorySummary(count: Int(s.int(0)), first: date(s.optionalInt(1)), last: date(s.optionalInt(2)),
+                                     plays: Int(s.int(3)))
         while try s.step() {}
         return summary
     }

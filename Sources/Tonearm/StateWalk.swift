@@ -263,7 +263,8 @@ enum StateWalk {
 
         // Settings > History and ListenBrainz. The whole panel, then the real window scrolled to them.
         let march2019 = HistorySettingsModel.date(2019, 3, 4)
-        let full = HistorySummary(count: 48_872, first: march2019, last: HistorySettingsModel.date(2026, 11, 16))
+        let full = HistorySummary(count: 48_872, first: march2019, last: HistorySettingsModel.date(2026, 11, 16),
+                                  plays: 40_609)
         let since = ListenBrainzSync.ms(HistorySettingsModel.date(2026, 11, 1))
         let sending = ListenBrainzSync.HistorySend(
             before: since, first: ListenBrainzSync.ms(march2019),
@@ -278,12 +279,13 @@ enum StateWalk {
         var done = connected
         done.history?.finished = HistorySettingsModel.date(2026, 11, 2)
         done.history?.sent = 39_410
-        let imported = HistorySettingsModel.Note(action: .imported, text: HistorySettingsModel.describe(
+        let imported = HistorySettingsModel.Note(action: .imported, text: HistoryWords.importNote(
             ImportResult(files: 7, rows: 51_000, added: 48_872, duplicates: 1_203, skipped: 925,
-                         unreadable: ["notes.json"], first: march2019, last: HistorySettingsModel.date(2026, 10, 30))))
-        let exported = HistorySettingsModel.Note(action: .exported,
-                                                 text: "Saved 48,872 listens to Tonearm listens 2026-11-17.csv.",
-                                                 file: URL(fileURLWithPath: "/tmp/listens.csv"))
+                         unreadable: ["notes.json"], first: march2019, last: HistorySettingsModel.date(2026, 10, 30)),
+            plays: 40_609))
+        let exported = HistorySettingsModel.Note(
+            action: .exported, text: "Saved 40,609 plays and 8,263 other entries to Tonearm listens 2026-11-17.csv.",
+            file: URL(fileURLWithPath: "/tmp/listens.csv"))
         let deleteFailed = HistorySettingsModel.Note(action: .deleted, text: "Could not delete: the database is busy",
                                                      isError: true)
         add("settings-history-empty", "History: nothing stored, recording off, ListenBrainz off",

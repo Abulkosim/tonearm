@@ -625,11 +625,11 @@ struct ImportPanel: View {
                     .foregroundColor(p.secondary)
                     .padding(.top, 12)
             case .finished(let r, let plays):
-                Text(Self.headline(r, plays: plays))
+                Text(HistoryWords.importHeadline(r, plays: plays))
                     .font(LinerType.serif(28))
                     .foregroundColor(p.primary)
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Self.lines(r, plays: plays, timeZone: model.timeZone), id: \.self) { line in
+                    ForEach(HistoryWords.importLines(r, plays: plays, timeZone: model.timeZone), id: \.self) { line in
                         Text(line)
                             .font(.system(size: 13))
                             .foregroundColor(p.secondary)
@@ -661,39 +661,6 @@ struct ImportPanel: View {
             }
         }
         .frame(width: 440, alignment: .leading)
-    }
-
-    /// Plays here mean what they mean on the page: music, 30 s or more.
-    static func headline(_ r: ImportResult, plays: Int) -> String {
-        if plays > 0 { return "Added \(LinerFormat.number(plays)) \(plays == 1 ? "play" : "plays")" }
-        return r.added - r.replacedLive > 0 ? "Added only skips and podcasts" : "Nothing new to add"
-    }
-
-    /// What the import found, in plain sentences.
-    static func lines(_ r: ImportResult, plays: Int, timeZone tz: TimeZone) -> [String] {
-        var out: [String] = []
-        if let first = r.first, let last = r.last {
-            let f = DateFormatter()
-            f.timeZone = tz
-            f.setLocalizedDateFormatFromTemplate("MMMMy")
-            let a = f.string(from: first), b = f.string(from: last)
-            out.append(a == b ? "All from \(a)." : "From \(a) to \(b).")
-        }
-        // Rows the import brought that the page does not count. A replaced listen is not new.
-        let other = r.added - r.replacedLive - plays
-        if other > 0 {
-            out.append("\(LinerFormat.number(other)) more \(other == 1 ? "entry is kept but doesn’t" : "entries are kept but don’t") count as plays: songs stopped before 30 seconds, and podcasts.")
-        }
-        if r.duplicates > 0 {
-            out.append("\(LinerFormat.number(r.duplicates)) \(r.duplicates == 1 ? "entry was" : "entries were") in more than one file or already here, and count once.")
-        }
-        if r.replacedLive > 0 {
-            out.append("\(LinerFormat.number(r.replacedLive)) \(r.replacedLive == 1 ? "listen" : "listens") Tonearm heard itself now use Spotify's more exact times.")
-        }
-        if !r.unreadable.isEmpty {
-            out.append("Couldn’t read \(r.unreadable.count == 1 ? "1 file" : "\(r.unreadable.count) files"): \(r.unreadable.prefix(3).joined(separator: ", ")).")
-        }
-        return out
     }
 }
 
