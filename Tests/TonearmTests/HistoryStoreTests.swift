@@ -90,6 +90,23 @@ final class HistoryStoreTests: XCTestCase {
         }
     }
 
+    /// An import says how many plays it added, by the rule Liner Notes uses: the episode is
+    /// stored but is not a play. The summary counts the same way.
+    func testImportCountsPlaysLikeLinerNotes() async throws {
+        try write("Spotify Extended Streaming History/Streaming_History_Audio_2024_0.json", extended)
+        let s = store()
+        let (result, plays) = try await s.importCountingPlays(urls: [dir.appendingPathComponent("export")])
+        XCTAssertEqual(result.added, 2)
+        XCTAssertEqual(plays, 1)
+        let allTime = try await s.stats(for: .allTime)
+        XCTAssertEqual(allTime.music.listens, plays)
+        let summary = try await s.summary()
+        XCTAssertEqual(summary.count, 2)
+        XCTAssertEqual(summary.plays, 1)
+        let (_, again) = try await s.importCountingPlays(urls: [dir.appendingPathComponent("export")])
+        XCTAssertEqual(again, 0)
+    }
+
     func testSchema() throws {
         let s = store()
         XCTAssertEqual(try s.sync { try $0.countNow() }, 0)
@@ -430,6 +447,7 @@ final class HistoryStoreReadTests: XCTestCase {
         }
         let sum = try store.sync { try $0.summaryNow() }
         XCTAssertEqual(sum.count, 5)
+        XCTAssertEqual(sum.plays, 4, "the episode is not a play")
         XCTAssertEqual(sum.first, t0)
         XCTAssertEqual(sum.last, t0.addingTimeInterval(800))
         let all = try store.sync { try $0.musicPageNow(after: nil, before: .max, limit: 10) }

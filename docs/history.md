@@ -15,6 +15,8 @@ For each song or podcast episode you play while Tonearm is running:
 
 Tonearm counts only time the song was playing. Pauses, skipping ahead and sleep add nothing. Ads are never recorded.
 
+A song you played for 30 seconds or more is a play, as Spotify counts streams. Settings and Liner Notes both count plays. Shorter plays and podcast episodes are kept too, as other entries: they add to your minutes, and podcasts get their own line.
+
 Tonearm asks the Spotify app on your Mac what is playing, the same way it shows the player. It can't see Spotify on your phone or in a browser. To get those, import your Spotify data.
 
 ## What is never stored
@@ -43,7 +45,7 @@ You can import the same files twice, or both kinds of export. Tonearm keeps one 
 
 ## Export
 
-Settings → History → Export saves every listen as CSV or JSON, oldest first, with these columns:
+Settings → History → Export saves every entry, plays and the rest, as CSV or JSON, oldest first, with these columns:
 
 `started_at, ended_at, ms_played, kind, title, artist, album, spotify_uri, duration_ms, artwork_url, source, skipped, shuffle, offline, incognito, reason_start, reason_end`
 
@@ -53,7 +55,7 @@ In the CSV, text that starts with `=`, `+`, `-` or `@` gets a `'` in front, so E
 
 ## Delete
 
-Settings → History → Delete all history… asks first, with the number of listens, then deletes them all, and the kept covers. It also empties the ListenBrainz queue, since that holds song names. Nothing deleted stays on disk: Tonearm overwrites the freed space and clears SQLite's write-ahead log.
+Settings → History → Delete all history… asks first, with the number of plays and other entries, then deletes them all, and the kept covers. It also empties the ListenBrainz queue, since that holds song names. Nothing deleted stays on disk: Tonearm overwrites the freed space and clears SQLite's write-ahead log.
 
 Turning off Record listening stops recording at once and keeps what is already there.
 

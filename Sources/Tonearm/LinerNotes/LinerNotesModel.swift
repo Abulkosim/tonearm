@@ -261,16 +261,14 @@ final class LinerNotesModel: ObservableObject {
         importState = .running(filesDone: 0, filesTotal: 0, rowsRead: 0)
         Task {
             do {
-                let before = try await store.playCount()
-                let result = try await store.import(urls: urls) { p in
+                let (result, plays) = try await store.importCountingPlays(urls: urls) { p in
                     Task { @MainActor [weak self] in
                         guard let self, case .running = self.importState else { return }
                         self.importState = .running(filesDone: p.filesDone, filesTotal: p.filesTotal,
                                                     rowsRead: p.rowsRead)
                     }
                 }
-                let plays = try await store.playCount() - before
-                importState = .finished(result, plays: max(0, plays))
+                importState = .finished(result, plays: plays)
                 // Show the latest year the import brought.
                 if let last = result.last {
                     chosePeriod = true

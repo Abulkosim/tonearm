@@ -367,9 +367,12 @@ struct Stats: Codable, Equatable {
 
 /// How much history there is. `first` and `last` are start times; nil when it is empty.
 struct HistorySummary: Equatable {
+    /// Every stored entry: plays, short plays and podcast episodes.
     var count = 0
     var first: Date?
     var last: Date?
+    /// Music played 30 s or more: what Liner Notes calls plays.
+    var plays = 0
 }
 
 /// A place in the listens, oldest first: the start time and row id of the last one read.

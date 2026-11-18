@@ -52,7 +52,8 @@ final class HistorySettingsModel: ObservableObject {
 
     /// The sample the settings snapshots show.
     static var sample: HistorySettingsModel {
-        preview(summary: HistorySummary(count: 48_872, first: Self.date(2019, 3, 4), last: Self.date(2026, 11, 16)))
+        preview(summary: HistorySummary(count: 48_872, first: Self.date(2019, 3, 4), last: Self.date(2026, 11, 16),
+                                        plays: 40_609))
     }
 
     var displayFolder: String { (folder.path as NSString).abbreviatingWithTildeInPath }
@@ -96,39 +97,19 @@ final class HistorySettingsModel: ObservableObject {
         progress = nil
         note = nil
         do {
-            let result = try await store.import(urls: urls) { p in
+            let (result, plays) = try await store.importCountingPlays(urls: urls) { p in
                 // On the store's queue.
                 Task { @MainActor [weak self] in
                     if self?.isImporting == true { self?.progress = p }
                 }
             }
-            note = Note(action: .imported, text: Self.describe(result))
+            note = Note(action: .imported, text: HistoryWords.importNote(result, plays: plays))
         } catch {
             note = Note(action: .imported, text: "\(error)", isError: true)
         }
         isImporting = false
         progress = nil
         refresh()
-    }
-
-    static func describe(_ r: ImportResult) -> String {
-        var parts: [String] = []
-        if r.added == 0 {
-            parts.append(r.duplicates > 0 ? "Nothing new: all \(count(r.duplicates)) were already here."
-                         : "No listens in those files.")
-        } else {
-            var line = "Added \(count(r.added)) \(r.added == 1 ? "listen" : "listens")"
-            if let first = r.first, let last = r.last {
-                let a = monthYear(first), b = monthYear(last)
-                line += a == b ? " from \(a)" : " from \(a) to \(b)"
-            }
-            parts.append(line + ".")
-            if r.duplicates > 0 { parts.append("\(count(r.duplicates)) were already here.") }
-        }
-        if !r.unreadable.isEmpty {
-            parts.append(r.unreadable.count == 1 ? "1 file could not be read." : "\(r.unreadable.count) files could not be read.")
-        }
-        return parts.joined(separator: " ")
     }
 
     // MARK: Export
@@ -152,9 +133,8 @@ final class HistorySettingsModel: ObservableObject {
         defer { isBusy = false }
         do {
             let n = try await store.export(to: url, format: format)
-            note = Note(action: .exported,
-                        text: "Saved \(Self.count(n)) \(n == 1 ? "listen" : "listens") to \(url.lastPathComponent).",
-                        file: url)
+            let what = HistoryWords.playsAndEntries(plays: min(summary?.plays ?? 0, n), total: n)
+            note = Note(action: .exported, text: "Saved \(what) to \(url.lastPathComponent).", file: url)
         } catch {
             note = Note(action: .exported, text: "Could not save: \(error.localizedDescription)", isError: true)
         }
@@ -170,11 +150,11 @@ final class HistorySettingsModel: ObservableObject {
             isBusy = false
             confirmingDelete = false
         }
-        let n = summary?.count ?? 0
+        let what = deletedWords
         do {
             try await store.deleteAll()
             listenBrainz.deleteQueued()
-            note = Note(action: .deleted, text: "Deleted \(Self.count(n)) \(n == 1 ? "listen" : "listens").")
+            note = Note(action: .deleted, text: "Deleted \(what).")
         } catch {
             note = Note(action: .deleted, text: "Could not delete: \(error)", isError: true)
         }
@@ -199,15 +179,23 @@ final class HistorySettingsModel: ObservableObject {
 
     // MARK: Words
 
-    /// "48,872 listens since March 2019".
+    /// "40,609 plays since March 2019": plays as Liner Notes counts them, music of 30 s or more.
     func summaryLine(recording: Bool) -> String {
         guard let summary else { return " " }
         if summary.count == 0 {
             return recording ? "Nothing yet. Play something, or import your Spotify data." : "Nothing stored."
         }
-        var line = "\(Self.count(summary.count)) \(summary.count == 1 ? "listen" : "listens")"
+        if summary.plays == 0 {
+            return "No plays yet: \(HistoryWords.entries(summary.count)), all short plays or podcasts."
+        }
+        var line = LinerFormat.plays(summary.plays)
         if let first = summary.first { line += " since \(Self.monthYear(first))" }
         return line
+    }
+
+    /// What "Delete all history" removes: "40,609 plays and 8,263 other entries".
+    var deletedWords: String {
+        HistoryWords.playsAndEntries(plays: summary?.plays ?? 0, total: summary?.count ?? 0)
     }
 
     static func count(_ n: Int) -> String {

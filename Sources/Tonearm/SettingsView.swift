@@ -233,9 +233,8 @@ struct SettingsView: View {
     }
 
     private var deleteConfirmation: some View {
-        let n = history.summary?.count ?? 0
-        return VStack(alignment: .leading, spacing: 8) {
-            Text("Delete \(HistorySettingsModel.count(n)) \(n == 1 ? "listen" : "listens") from this Mac? "
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Delete \(history.deletedWords) from this Mac? "
                  + "This can't be undone. Listens already sent to ListenBrainz stay there.")
                 .font(.system(size: 12))
                 .foregroundColor(Theme.secondary)
