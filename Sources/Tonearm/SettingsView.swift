@@ -175,6 +175,10 @@ struct SettingsView: View {
         }
         line(history.summaryLine(recording: settings.recordHistory))
 
+        actionRow("Open Liner Notes", keys: "⌘L") {
+            if !isSnapshot { LinerNotesWindow.open() }
+        }
+        .help("Your listening by week, month, year or all time. Also the chart button next to the gear.")
         actionRow(history.isImporting ? "Importing…" : "Import Spotify data…") { history.chooseImport() }
             .disabled(history.isImporting || history.confirmingDelete || history.isBusy)
             .help("The .zip Spotify sends from Account › Privacy › Download your data")
