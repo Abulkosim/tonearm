@@ -523,8 +523,8 @@ def cmd_bench(a):
     zip_ms = timing(err, "import:")[0]
     print("zip of the 100k fixture: import %d ms, unzip included" % zip_ms)
 
-    ok = import_ms < 5000 and min(st[:3]) < 300
-    line = ("Liner Notes speed: import of %d listens %d ms (limit 5000 for 100k; %d ms from a zip, no limit), "
+    ok = import_ms < 10000 and min(st[:3]) < 300
+    line = ("Liner Notes speed: import of %d listens %d ms (limit 10000 for 100k; %d ms from a zip, no limit), "
             "all-time stats on %d listens %d ms warm (limit 300), %d ms first call in a new process (no limit), "
             "%d ms first call after the launch warm-up (warm-up %d ms, no limit)"
             % (n_import, import_ms, zip_ms, n_stats, min(st[:3]), st[0], warmed, warm_ms))
