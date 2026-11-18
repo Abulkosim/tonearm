@@ -4,7 +4,7 @@ Tonearm keeps a record of what you play in Spotify. Liner Notes uses it to show 
 
 To open Liner Notes, click the chart button next to the gear in the player, or press ⌘L while the player is open. Settings → History → Open Liner Notes does the same.
 
-The switch is in Settings → History → Record listening. It is on by default.
+The switch is in Settings → History → Record listening. It is on by default. The welcome window says so on a new install. If you had Tonearm before, the player says it once, the first time you open it after the update, with a button to turn it off.
 
 ## What is recorded
 

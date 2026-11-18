@@ -56,3 +56,69 @@ final class LengthStepperTests: XCTestCase {
         XCTAssertEqual(LengthStepper.stepped(58, up: true), 60)
     }
 }
+
+/// The note that Tonearm keeps a record of what you play: once, and only for people who
+/// updated. A new install reads it in the welcome window.
+@MainActor
+final class HistoryNoticeTests: XCTestCase {
+    /// Runs `body` with empty defaults of its own, removed after.
+    private func withDefaults(_ body: (UserDefaults) -> Void) throws {
+        let suite = "tonearm.tests.notice.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        body(defaults)
+    }
+
+    func testShowsOnceAfterAnUpdate() throws {
+        try withDefaults { defaults in
+            let notice = HistoryNotice(defaults: defaults)
+            notice.launched(firstLaunch: false)
+            XCTAssertFalse(notice.isShowing)
+            notice.playerOpened(recording: true)
+            XCTAssertTrue(notice.isShowing)
+            // The window may report the same opening twice.
+            notice.playerOpened(recording: true)
+            XCTAssertTrue(notice.isShowing)
+            notice.playerClosed()
+            XCTAssertFalse(notice.isShowing)
+            notice.playerOpened(recording: true)
+            XCTAssertFalse(notice.isShowing, "the second opening is quiet")
+            // Nor after a relaunch.
+            let relaunched = HistoryNotice(defaults: defaults)
+            relaunched.launched(firstLaunch: false)
+            relaunched.playerOpened(recording: true)
+            XCTAssertFalse(relaunched.isShowing)
+        }
+    }
+
+    func testDismissedStaysDismissed() throws {
+        try withDefaults { defaults in
+            let notice = HistoryNotice(defaults: defaults)
+            notice.playerOpened(recording: true)
+            notice.dismiss()
+            XCTAssertFalse(notice.isShowing)
+            notice.playerClosed()
+            notice.playerOpened(recording: true)
+            XCTAssertFalse(notice.isShowing)
+        }
+    }
+
+    func testNewInstallHearsItInTheWelcomeWindow() throws {
+        try withDefaults { defaults in
+            let notice = HistoryNotice(defaults: defaults)
+            notice.launched(firstLaunch: true)
+            notice.playerOpened(recording: true)
+            XCTAssertFalse(notice.isShowing)
+        }
+    }
+
+    func testNothingToSayWhileRecordingIsOff() throws {
+        try withDefaults { defaults in
+            let notice = HistoryNotice(defaults: defaults)
+            notice.playerOpened(recording: false)
+            XCTAssertFalse(notice.isShowing)
+            XCTAssertFalse(notice.seen, "still owed if recording comes back on")
+        }
+    }
+}
+

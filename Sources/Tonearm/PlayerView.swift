@@ -31,6 +31,8 @@ struct PlayerView: View {
         var listenBrainz: ListenBrainzSync?
         /// Text in the ListenBrainz token field.
         var token = ""
+        /// The one-time note that Tonearm now keeps a record of what you play.
+        var historyNotice = false
     }
 
     /// Nil in the app.
@@ -44,6 +46,7 @@ struct PlayerView: View {
 
     @EnvironmentObject var model: PlayerModel
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var notice = HistoryNotice.shared
     @State private var showSettings: Bool
     /// Seconds under the pointer while dragging the progress bar.
     @State private var scrubSeconds: Double?
@@ -100,21 +103,49 @@ struct PlayerView: View {
 
     @ViewBuilder private var playerPanel: some View {
         if status == .ready && layout == .compact {
-            compactPlayer
-                .padding(Self.padding)
+            VStack(spacing: 0) {
+                compactPlayer
+                historyNotice(top: 12)
+            }
+            .padding(Self.padding)
         } else {
             VStack(spacing: 0) {
                 playerHeader
                     .padding(.bottom, 12)
                 if status == .ready {
+                    // The note sits on the cover here, so the window is no taller.
                     largePlayer
                 } else {
                     statusScreen
+                    historyNotice(top: 16)
                 }
             }
             .padding(.horizontal, Self.padding)
             .padding(.top, 12)
             .padding(.bottom, Self.padding)
+        }
+    }
+
+    private var showsHistoryNotice: Bool { preview?.historyNotice ?? notice.isShowing }
+
+    /// Once, after the update that started recording. See `HistoryNotice`.
+    @ViewBuilder private func historyNotice(top: CGFloat, onCover: Bool = false) -> some View {
+        if showsHistoryNotice {
+            HistoryNoticeView(
+                onCover: onCover,
+                openLinerNotes: {
+                    notice.dismiss()
+                    openLinerNotes()
+                },
+                turnOff: {
+                    guard !isSnapshot else { return }
+                    settings.recordHistory = false
+                    withAnimation(PlayerTheme.medium) { notice.dismiss() }
+                },
+                dismiss: { withAnimation(PlayerTheme.medium) { notice.dismiss() } }
+            )
+            .padding(.top, top)
+            .transition(.opacity)
         }
     }
 
@@ -342,6 +373,10 @@ struct PlayerView: View {
         .compositingGroup()
         .shadow(color: .black.opacity(0.45), radius: 16, y: 8)
         .animation(PlayerTheme.fade, value: coverKey)
+        .overlay(alignment: .bottom) {
+            historyNotice(top: 0, onCover: true)
+                .padding(8)
+        }
         .overlay(alignment: .topTrailing) {
             if showCoverActions {
                 CoverActions(canCopy: model.trackURL != nil, note: coverNote,
@@ -638,12 +673,14 @@ struct PlayerView: View {
         guard !isSnapshot else { return }
         model.popoverVisible = true
         keys.start(window: { model.popoverWindow }, handle)
+        notice.playerOpened(recording: settings.recordHistory)
     }
 
     private func disappeared() {
         guard !isSnapshot else { return }
         model.popoverVisible = false
         keys.stop()
+        notice.playerClosed()
         resetForNextOpen()
     }
 

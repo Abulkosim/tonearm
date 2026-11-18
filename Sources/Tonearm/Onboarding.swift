@@ -8,6 +8,8 @@ import SwiftUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // A first launch hears about the listening record in the welcome window; an update, in the player.
+        HistoryNotice.shared.launched(firstLaunch: !Onboarding.welcomeShown)
         guard !Onboarding.welcomeShown else { return }
         // Give the status item a moment to appear, so the window can sit under it.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -241,6 +243,8 @@ struct WelcomeView: View {
             VStack(alignment: .leading, spacing: 8) {
                 note(title: "Don't see it?",
                      text: "Your menu bar may be full; hold ⌘ and drag other icons out, or quit a few menu bar apps")
+                note(title: "What you play stays on this Mac",
+                     text: "Tonearm keeps a private record of it for Liner Notes, the chart button next to the gear (⌘L); turn it off in Settings › History")
                 if !spotifyInstalled {
                     note(title: "Spotify isn't installed",
                          text: "Tonearm works with the Spotify desktop app") {

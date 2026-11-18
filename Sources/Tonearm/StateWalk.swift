@@ -197,6 +197,19 @@ enum StateWalk {
         add("shuffle-repeat-compact", "Shuffle and repeat on, compact",
             pop(playing(Samples.song, shuffle: true, repeating: true), layout: .compact))
 
+        // The one-time note after the update that started recording.
+        add("history-notice", "After the update: the note that Tonearm keeps a record",
+            pop(playing(Samples.song)) { $0.historyNotice = true })
+        add("history-notice-compact", "After the update, compact",
+            pop(playing(Samples.song), layout: .compact) { $0.historyNotice = true })
+        add("history-notice-not-running", "After the update, Spotify not running",
+            pop(idle()) {
+                $0.status = .notRunning
+                $0.historyNotice = true
+            })
+        add("history-notice-pale", "After the update, pale cover",
+            pop(playing(Samples.song, cover: .pale)) { $0.historyNotice = true })
+
         // Cover colors, for contrast.
         let covers: [(String, Snapshot.SampleCover)] = [
             ("teal", .teal), ("warm", .warm), ("pale", .pale), ("black", .black),
