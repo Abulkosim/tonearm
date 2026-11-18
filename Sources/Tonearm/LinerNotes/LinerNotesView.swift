@@ -161,26 +161,13 @@ struct LinerNotesView: View {
 
     // MARK: Hero
 
-    /// The sleeve: the top album's cover and colors, the minutes, the counts, the top artist
-    /// and the top song. Everything a glance should answer.
+    /// The sleeve: the top album's cover and colors, the minutes, the counts, and the top
+    /// artist, song and album. Everything a glance should answer.
     private func hero(_ s: Stats) -> some View {
         let sleeve = model.sleeve
-        let secondary = Color.white.opacity(SleeveColors.secondaryOpacity)
-        let album = s.music.topAlbums.first
         return HStack(alignment: .top, spacing: 32) {
-            VStack(alignment: .leading, spacing: 12) {
-                ArtTile(image: model.topAlbumImage, name: model.topAlbumName, size: 200, radius: 6)
-                    .shadow(color: .black.opacity(0.35), radius: 16, y: 8)
-                if let album {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Top album").font(.system(size: 12)).foregroundColor(secondary)
-                        WordClampedText(text: album.name, font: .system(size: 13, weight: .medium), lines: 2,
-                                        color: .white)
-                        Text(LinerFormat.meta(album)).font(.system(size: 12).monospacedDigit()).foregroundColor(secondary)
-                    }
-                    .frame(width: 200, alignment: .leading)
-                }
-            }
+            ArtTile(image: model.topAlbumImage, name: model.topAlbumName, size: 200, radius: 6)
+                .shadow(color: .black.opacity(0.35), radius: 16, y: 8)
             VStack(alignment: .leading, spacing: 0) {
                 // The counts sit beside the minutes when there is room, under them when not.
                 ViewThatFits(in: .horizontal) {
@@ -197,13 +184,16 @@ struct LinerNotesView: View {
                 }
                 Rectangle().fill(Color.white.opacity(0.16)).frame(height: 1)
                     .padding(.vertical, 24)
-                HStack(alignment: .top, spacing: 32) {
+                // Three of a kind: label, name, whose it is, then minutes and plays.
+                HStack(alignment: .top, spacing: 24) {
                     if let artist = s.music.topArtists.first {
-                        heroPick("Top artist", artist.name, LinerFormat.meta(artist))
+                        heroPick("Top artist", artist, by: nil)
                     }
                     if let song = s.music.topTracks.first {
-                        heroPick("Top song", song.name,
-                                 [song.artist, LinerFormat.minutesText(song.ms)].compactMap { $0 }.joined(separator: " · "))
+                        heroPick("Top song", song, by: song.artist)
+                    }
+                    if let album = s.music.topAlbums.first {
+                        heroPick("Top album", album, by: album.artist)
                     }
                 }
             }
@@ -215,16 +205,24 @@ struct LinerNotesView: View {
         .environment(\.colorScheme, .dark)
     }
 
-    private func heroPick(_ label: String, _ name: String, _ detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+    private func heroPick(_ label: String, _ item: Stats.Item, by: String?) -> some View {
+        let secondary = Color.white.opacity(SleeveColors.secondaryOpacity)
+        return VStack(alignment: .leading, spacing: 4) {
             Text(label)
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(SleeveColors.secondaryOpacity))
-            WordClampedText(text: name, font: LinerType.serif(26), lines: 2, color: .white)
-            WordClampedText(text: detail, font: .system(size: 13).monospacedDigit(), lines: 1,
-                            color: .white.opacity(SleeveColors.secondaryOpacity))
+                .foregroundColor(secondary)
+            WordClampedText(text: item.name, font: LinerType.serif(22), lines: 2, color: .white)
+            if let by, !by.isEmpty {
+                WordClampedText(text: by, font: .system(size: 13), lines: 1, color: secondary)
+            }
+            Text(LinerFormat.meta(item))
+                .font(.system(size: 12).monospacedDigit())
+                .foregroundColor(secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 
     private func minutes(_ s: Stats, shrinks: Bool) -> some View {
