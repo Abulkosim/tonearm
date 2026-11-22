@@ -132,6 +132,11 @@ final class PlayerAccessibilityTests: XCTestCase {
                        "Paused, A Very Long Song Title That Gets Cut by Artist")
         XCTAssertEqual(MenuBarLabel.spokenState(Playback(state: .stopped, track: track, position: 0, volume: 50)), "")
         XCTAssertEqual(MenuBarLabel.spokenState(Playback(state: .playing, track: nil, position: 0, volume: 50)), "")
+        XCTAssertEqual(MenuBarLabel.spokenLabel(Playback(state: .playing, track: track, position: 0, volume: 50)),
+                       "Tonearm, Playing A Very Long Song Title That Gets Cut by Artist")
+        XCTAssertEqual(MenuBarLabel.spokenLabel(Playback(state: .stopped, track: track, position: 0, volume: 50)),
+                       "Tonearm")
+        XCTAssertEqual(MenuBarLabel.spokenLabel(nil), "Tonearm", "Spotify not ready")
     }
 
     /// Space presses the focused control. Every control style reports its focus up the tree.
