@@ -27,7 +27,16 @@ If you need to see the permission prompt again, see [docs/permissions.md](docs/p
 gh run download <run-id> -n snapshots
 ```
 
-The README animation, `docs/images/demo.gif`, is rendered the same way. `scripts/make-demo.sh` runs `Tonearm --demo` and joins the frames with [gifski](https://gif.ski). The Demo workflow does this on pull requests that touch `Snapshot.swift` and uploads the GIF as the `demo` artifact. When the player's look changes, download it and commit it.
+The README and website pictures in `docs/images` are rendered the same way, from the app's own views: `scripts/make-demo.sh` runs `Tonearm --demo`, which writes the animation's frames and the stills (`player.png`, `compact.png`, `liner-notes.png`, `share-card.png` and `social.png`, the website's 1200x630 preview), and joins the frames into `demo.gif` with [gifski](https://gif.ski). Liner Notes reads a made-up history that the app writes as a Spotify export and imports, so every number in the pictures comes from the stats code.
+
+The Demo workflow renders them on every pull request that touches the app or the docs, uploads them as the `demo` artifact, and fails if the committed stills differ from the render. When it fails, download the artifact into `docs/images` and commit it:
+
+```sh
+gh run download <run-id> -n demo -D build/demo-artifact
+cp build/demo-artifact/demo/* docs/images/
+```
+
+The same workflow checks every link in the docs and the website with `docs/check-links.py`.
 
 ## State walk
 
@@ -78,13 +87,15 @@ The icon is drawn in code by `scripts/make-icon.swift`. Run `swift scripts/make-
 
 ## Website
 
-`site/index.html` is the page at https://abulkosim.github.io/tonearm/. It is plain HTML and CSS with no build step. The Pages workflow copies `design/icon-1024.png` and `docs/images/player.png` into it and deploys it when `site/` changes on `main`. To preview it:
+`site/index.html` is the page at https://abulkosim.github.io/tonearm/. It is plain HTML and CSS with no build step. The Pages workflow copies `design/icon-1024.png` and the pictures it uses from `docs/images` into it and deploys it when they or `site/` change on `main`. To preview it:
 
 ```sh
 cp design/icon-1024.png site/icon.png
-cp docs/images/player.png site/player.png
+cp docs/images/{player,liner-notes,social}.png site/
 open site/index.html
 ```
+
+`site/.gitignore` keeps the copies out of git.
 
 ## Homebrew
 
