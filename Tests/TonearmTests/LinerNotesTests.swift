@@ -288,6 +288,42 @@ final class LinerNotesModelTests: XCTestCase {
         XCTAssertEqual(late.period, .month(year: 2025, month: 11))
     }
 
+    /// Until it is told, Foundation keeps the time zone the app started in. The window
+    /// follows the Mac to another one: a play at 19:29 UTC on Dec 31, 2023 is 2023 in UTC and
+    /// 2024 in Tashkent.
+    func testFollowsTheMacToAnotherTimeZone() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tonearm-tz-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("export/StreamingHistory_music_0.json")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("""
+        [{"endTime": "2023-12-31 19:30", "artistName": "A", "trackName": "T", "msPlayed": 60000}]
+        """.utf8).write(to: file)
+        let store = HistoryStore(url: dir.appendingPathComponent("db/history.sqlite"))
+        _ = try store.sync { try $0.importNow(urls: [file]) }
+
+        var zone = utc
+        let center = NotificationCenter()
+        let m = LinerNotesModel(store: store, systemTimeZone: { zone }, notifications: center)
+        XCTAssertEqual(m.timeZone.identifier, "UTC")
+        m.start()
+        try await until { m.phase == .ready }
+        XCTAssertEqual(m.years, [2023])
+
+        zone = TimeZone(identifier: "Asia/Tashkent")!
+        center.post(name: .NSSystemTimeZoneDidChange, object: nil)
+        try await until { m.years == [2024] }
+        XCTAssertEqual(m.timeZone.identifier, "Asia/Tashkent")
+        XCTAssertEqual(m.period, .year(2024))
+        XCTAssertEqual(m.stats?.period, "year:2024")
+        XCTAssertEqual(m.stats?.music.listens, 1)
+    }
+
+    private func until(_ done: () -> Bool) async throws {
+        for _ in 0..<500 where !done() { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertTrue(done(), "timed out")
+    }
+
     /// A period with no plays says what it had instead of "Nothing played".
     func testPeriodWithoutPlaysSaysWhatWasThere() {
         let when = "in October 2025"
