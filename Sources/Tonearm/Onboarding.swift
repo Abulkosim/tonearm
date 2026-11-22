@@ -41,7 +41,7 @@ enum Onboarding {
         set { UserDefaults.standard.set(newValue, forKey: shownKey) }
     }
 
-    private static var controller: WelcomeWindowController?
+    @MainActor private static var controller: WelcomeWindowController?
 
     /// Shows the welcome window and brings Tonearm to the front.
     @MainActor

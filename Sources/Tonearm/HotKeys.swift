@@ -42,14 +42,14 @@ final class HotKeys {
     /// 'TnAm'
     private static let signature: OSType = 0x546E_416D
 
-    private let perform: (Action) -> Void
+    private let perform: @Sendable (Action) -> Void
     private var refs: [EventHotKeyRef] = []
     private var handler: EventHandlerRef?
 
     /// True when at least one shortcut is registered.
     private(set) var isEnabled = false
 
-    init(perform: @escaping (Action) -> Void) {
+    init(perform: @escaping @Sendable (Action) -> Void) {
         self.perform = perform
     }
 
