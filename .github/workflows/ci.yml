@@ -177,12 +177,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Each check below runs even if one before it failed, so one run shows every finding.
       - name: ShellCheck
         run: |
           shellcheck --version
           git ls-files -z '*.sh' | xargs -0 shellcheck
       # Also runs ShellCheck on every run: block.
       - name: actionlint
+        if: ${{ !cancelled() }}
         env:
           ACTIONLINT_VERSION: 1.7.12
           ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
@@ -195,11 +197,14 @@ jobs:
           "$RUNNER_TEMP/actionlint" -version
           "$RUNNER_TEMP/actionlint"
       - name: Actions pinned to a commit SHA
+        if: ${{ !cancelled() }}
         run: scripts/check-action-pins.sh
       # The release refuses a commit whose required checks did not pass; test that rule.
       - name: Release CI gate
+        if: ${{ !cancelled() }}
         run: scripts/require-ci-test.sh
       - name: Release notes for the current version
+        if: ${{ !cancelled() }}
         run: |
           version="$(grep -A1 '<key>CFBundleShortVersionString</key>' Resources/Info.plist \
             | sed -n 's:.*<string>\(.*\)</string>.*:\1:p')"
