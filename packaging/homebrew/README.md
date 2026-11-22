@@ -6,9 +6,9 @@
 brew install --cask abulkosim/tap/tonearm
 ```
 
-The cask uses `version :latest` and the stable link `releases/latest/download/Tonearm.dmg`, so it never needs a bump after a release. `auto_updates true` tells Homebrew that the app updates itself through Sparkle, so `brew upgrade` leaves it alone.
+The cask uses `version :latest` and the stable link `releases/latest/download/Tonearm.dmg`, so it never needs a bump after a release. Homebrew does not upgrade `:latest` casks unless you pass `--greedy`, so `brew upgrade` leaves Tonearm to update itself through Sparkle. (`brew audit` rejects `auto_updates` on a `:latest` cask.)
 
-The postflight removes the quarantine flag, because the app is not notarized. Homebrew users don't need Open Anyway.
+The `postflight_steps` remove the quarantine flag, because the app is not notarized. Homebrew users don't need Open Anyway.
 
 `brew uninstall --zap --cask tonearm` also removes the settings, caches and the listening history in `~/Library/Application Support/Tonearm`. It does not remove the ListenBrainz token from the Keychain; the README's uninstall steps show how.
 
