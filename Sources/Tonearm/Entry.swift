@@ -37,6 +37,8 @@ enum Entry {
         }
         // Runs once the app's run loop is up. Never reached in --snapshot, --demo, --states or --e2e runs, or tests.
         Task { @MainActor in Updater.shared.start() }
+        // THROWAWAY: hangs the main thread 3 s after launch, to prove live-launch.sh fails.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { Thread.sleep(forTimeInterval: 30) }
         TonearmApp.main()
     }
 }

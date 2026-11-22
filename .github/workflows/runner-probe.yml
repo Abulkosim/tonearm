@@ -1,0 +1,14 @@
+name: Runner probe
+# THROWAWAY: which old macOS images still start a job.
+on: pull_request
+permissions: {}
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14, macos-15-intel, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - run: sw_vers && uname -m
