@@ -126,6 +126,80 @@ final class HistoryStoreTests: XCTestCase {
         }
     }
 
+    /// history.sqlite exactly as v0.4.0 wrote it, kept here as it was, so a change to the
+    /// schema has to come with a migration that this test runs. Opening it keeps every
+    /// listen, and reads, live saves, imports and delete all work on it.
+    func testOpensTheDatabaseV040Wrote() throws {
+        let url = dir.appendingPathComponent("v040/history.sqlite")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        do {
+            let old = try SQLiteDB(path: url.path)
+            try old.exec("PRAGMA journal_mode = WAL")
+            try old.exec("""
+            CREATE TABLE tracks (
+                id INTEGER PRIMARY KEY,
+                kind INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                artist TEXT NOT NULL,
+                album TEXT NOT NULL,
+                uri TEXT NOT NULL,
+                duration_ms INTEGER,
+                artwork_url TEXT,
+                UNIQUE (kind, title, artist, album, uri)
+            );
+            CREATE TABLE listens (
+                id INTEGER PRIMARY KEY,
+                track_id INTEGER NOT NULL REFERENCES tracks(id),
+                started_at INTEGER NOT NULL,
+                ended_at INTEGER NOT NULL,
+                ms_played INTEGER NOT NULL,
+                source INTEGER NOT NULL,
+                precision INTEGER NOT NULL,
+                skipped INTEGER,
+                shuffle INTEGER,
+                offline INTEGER,
+                incognito INTEGER,
+                reason_start TEXT,
+                reason_end TEXT,
+                dedup_key INTEGER NOT NULL UNIQUE
+            );
+            CREATE INDEX listens_time ON listens (started_at, ms_played, track_id);
+            CREATE INDEX listens_source ON listens (source, ended_at);
+            PRAGMA user_version = 1;
+            INSERT INTO tracks VALUES (1, 0, 'Звезда', 'Кино', 'Группа крови', 'spotify:track:aaa', 200000,
+                                       'https://i.scdn.co/image/a');
+            INSERT INTO tracks VALUES (2, 1, 'Ep 1', 'Show', '', 'spotify:episode:eee', NULL, NULL);
+            INSERT INTO listens VALUES (1, 1, 1709287200000, 1709287400000, 200000, 0, 1,
+                                        NULL, NULL, NULL, NULL, NULL, NULL, 11);
+            INSERT INTO listens VALUES (2, 2, 1709364600000, 1709366100000, 1500000, 1, 1,
+                                        0, 0, 0, 0, 'clickrow', 'endplay', 12);
+            """)
+        }
+        XCTAssertEqual(HistoryStore.schemaVersion, 1,
+                       "a new schema needs a migration from v0.4.0's, and this test should open it with that migration")
+        let s = HistoryStore(url: url)
+        XCTAssertEqual(try s.sync { try $0.countNow() }, 2)
+        let utc = TimeZone(identifier: "UTC")!
+        let stats = try s.sync { try $0.statsNow(for: .allTime, timeZone: utc) }
+        XCTAssertEqual(stats.music.listens, 1)
+        XCTAssertEqual(stats.music.topTracks.first?.name, "Звезда")
+        XCTAssertEqual(stats.podcasts.ms, 1_500_000)
+        XCTAssertEqual(try s.sync { try $0.artworkNow() }.songs["Звезда\u{1F}Кино"], "https://i.scdn.co/image/a")
+        s.save(LiveListen(trackID: "spotify:track:aaa", kind: .music, title: "Звезда", artist: "Кино",
+                          album: "Группа крови", artworkURL: nil, durationMs: 200_000,
+                          startedAt: Date(timeIntervalSince1970: 1_709_400_000), endedAt: Date(timeIntervalSince1970: 1_709_400_200),
+                          msPlayed: 200_000))
+        s.flush()
+        XCTAssertEqual(try s.sync { try $0.countNow() }, 3)
+        try write("StreamingHistory_music_0.json", """
+        [{"endTime": "2024-03-05 10:00", "artistName": "Кино", "trackName": "Звезда", "msPlayed": 60000}]
+        """)
+        XCTAssertEqual(try s.sync { try $0.importNow(urls: [dir.appendingPathComponent("export")]) }.added, 1)
+        XCTAssertEqual(try s.sync { try $0.statsNow(for: .allTime, timeZone: utc) }.music.listens, 3)
+        try s.sync { try $0.deleteAllNow() }
+        XCTAssertEqual(try s.sync { try $0.countNow() }, 0)
+    }
+
     /// A database from a newer Tonearm is left alone, and the words say to update, not to try again.
     func testNewerSchemaAsksForAnUpdate() throws {
         let url = dir.appendingPathComponent("newer/history.sqlite")
