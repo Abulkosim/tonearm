@@ -31,9 +31,9 @@ mkdir -p "$out"
 status=0
 "$app" --demo "$frames" ${check[@]+"${check[@]}"} || status=$?
 [[ -f "$frames/report.txt" ]] || { echo "make-demo: the app wrote no report (exit $status)" >&2; exit 1; }
-# 10 fps matches Snapshot.demoFPS. 1380 px is 1.5x the 920 pt canvas: sharp at the
-# README's 690 px width on a Retina screen, and half the size of a 2x GIF.
-gifski --fps 10 --quality 90 --width 1380 --output "$out/demo.gif" "$frames"/frame-*.png
+# 10 fps matches Snapshot.demoFPS. 1520 px is twice the README's 760 px width, so it is
+# sharp on a Retina screen.
+gifski --fps 10 --quality 90 --width 1520 --output "$out/demo.gif" "$frames"/frame-*.png
 for still in player.png compact.png liner-notes.png share-card.png social.png; do
   cp "$frames/$still" "$out/$still"
 done
