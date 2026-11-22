@@ -1,0 +1,10 @@
+name: Throwaway lint
+# THROWAWAY: an unpinned action and an actionlint error, to prove the lint job fails.
+on: workflow_dispatch
+permissions: {}
+jobs:
+  x:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - run: echo "${{ steps.missing.outputs.value }}"

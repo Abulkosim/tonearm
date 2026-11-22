@@ -19,7 +19,10 @@ let package = Package(
         .testTarget(
             name: "TonearmTests",
             dependencies: ["Tonearm"],
-            path: "Tests/TonearmTests"
+            path: "Tests/TonearmTests",
+            // THROWAWAY: a duplicate rpath makes ld warn, to prove swift-warnings.sh counts it.
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@loader_path/throwaway",
+                                           "-Xlinker", "-rpath", "-Xlinker", "@loader_path/throwaway"])]
         ),
     ]
 )

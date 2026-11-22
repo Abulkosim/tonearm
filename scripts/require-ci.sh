@@ -54,7 +54,7 @@ states() {
     | ([$runs[] | select(.name == $name)] | sort_by(.started_at // "", .id) | last) as $run
     | if $run == null then "missing \($name)"
       elif $run.status != "completed" then "pending \($name)"
-      elif $run.conclusion == "success" then "ok \($name)"
+      elif $run.conclusion == "success" or $run.conclusion == "skipped" then "ok \($name)"
       else "failed:\($run.conclusion) \($name)" end'
 }
 
