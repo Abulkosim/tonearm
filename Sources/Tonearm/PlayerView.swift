@@ -57,6 +57,8 @@ struct PlayerView: View {
     @State private var coverNote: String?
     @State private var copyCount = 0
     @State private var keys = PopoverKeys()
+    /// A control has keyboard focus. Space then presses it instead of playing or pausing.
+    @State private var controlFocused = false
     /// Bumped each time the window closes. The panels are rebuilt under a new id, so hover
     /// states that never got their "mouse left" event start fresh on the next open.
     @State private var session = 0
@@ -90,6 +92,7 @@ struct PlayerView: View {
         .popoverWindowShape(!isSnapshot)
         .environment(\.colorScheme, .dark)
         .hidesSystemFocusRing()
+        .onPreferenceChange(ControlFocusKey.self) { controlFocused = $0 }
         .onAppear(perform: appeared)
         .onDisappear(perform: disappeared)
         .onChange(of: model.popoverVisible) { visible in
@@ -685,6 +688,7 @@ struct PlayerView: View {
     }
 
     private func handle(_ command: KeyCommand) -> Bool {
+        if controlFocused && command.yieldsToFocusedControl { return false }
         switch command {
         case .back:
             // Outside settings, Escape goes on to the window, which closes.

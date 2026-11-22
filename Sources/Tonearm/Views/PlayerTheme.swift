@@ -47,10 +47,19 @@ enum PlayerTheme {
     }
 }
 
+/// True when a control inside the view has keyboard focus. Every control that draws a
+/// `focusOutline` reports it, so the player can leave Space to the focused control.
+struct ControlFocusKey: PreferenceKey {
+    static let defaultValue = false
+    static func reduce(value: inout Bool, nextValue: () -> Bool) { value = value || nextValue() }
+}
+
 extension View {
-    /// Outlines the view while it has keyboard focus (Full Keyboard Access or Tab).
+    /// Outlines the view while it has keyboard focus (Full Keyboard Access or Tab), and
+    /// reports the focus as `ControlFocusKey`.
     func focusOutline<S: InsettableShape>(_ shape: S, isFocused: Bool) -> some View {
         overlay(shape.strokeBorder(PlayerTheme.focusRing, lineWidth: isFocused ? 1.5 : 0))
+            .preference(key: ControlFocusKey.self, value: isFocused)
     }
 
     /// Turns off the system's blue focus ring. Our button styles draw their own with `focusOutline`.

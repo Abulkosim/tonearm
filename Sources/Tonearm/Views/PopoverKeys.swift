@@ -14,6 +14,9 @@ enum KeyCommand: Equatable {
     case back
     case quit
 
+    /// Space presses the control that has keyboard focus, so it must not also play or pause.
+    var yieldsToFocusedControl: Bool { self == .playPause }
+
     var repeats: Bool {
         switch self {
         case .seekBack, .seekForward, .volumeUp, .volumeDown: return true
