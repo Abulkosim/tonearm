@@ -363,7 +363,7 @@ extension Snapshot {
     /// window open at its smallest width and the player open over it. The window starts 80 pt
     /// in, so the player hides its cover tile and buttons but cuts no text in half.
     static let demoCanvas = CGSize(width: 940, height: 724)
-    static let demoWindow = CGSize(width: LinerNotesWindow.minSize.width, height: 600)
+    @MainActor static let demoWindow = CGSize(width: LinerNotesWindow.minSize.width, height: 600)
     /// The website's social preview, 1200 x 630 pixels.
     static let socialCanvas = CGSize(width: 1200, height: 630)
 
