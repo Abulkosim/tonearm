@@ -218,9 +218,22 @@ class SpotifyBridge {
     /// once the user answered. Runs on the main actor. Set it once, before the first fetch.
     var permissionPromptChanged: (@MainActor @Sendable (Bool) -> Void)?
 
+    /// Spotify processes this bridge has seen, so a moment when AppKit loses track of one
+    /// does not count as a quit.
+    private let seen = SeenProcesses()
+
     /// Safe on any thread. Checked again right before every script.
+    ///
+    /// AppKit's list of running apps is not enough on its own. Its entries change only as the
+    /// main run loop turns and are "inherently race-prone" (NSRunningApplication docs): on CI
+    /// it said no Spotify ran, about one time in ten, just as a Spotify that had run for a
+    /// minute posted "playing". Tonearm took that for a quit and showed nothing while Spotify
+    /// played. So a Spotify process seen before still counts while its pid runs the same
+    /// executable.
     var isRunning: Bool {
-        NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleID).contains(where: Self.isAlive)
+        let listed = NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleID)
+            .filter(Self.isAlive)
+        return seen.running(listed: listed.compactMap(SeenProcesses.Process.init), isLive: SeenProcesses.isLive)
     }
 
     /// `isTerminated` is updated on the main run loop, so off the main thread it can lag a
@@ -498,6 +511,47 @@ class SpotifyBridge {
     }
 
     static func clampVolume(_ v: Int) -> Int { min(100, max(0, v)) }
+}
+
+/// Spotify processes seen in AppKit's list of running apps, kept while each one runs.
+/// Thread safe.
+final class SeenProcesses: @unchecked Sendable {
+    struct Process: Hashable {
+        let pid: pid_t
+        /// The executable, symlinks resolved.
+        let path: String
+
+        init(pid: pid_t, path: String) {
+            self.pid = pid
+            self.path = path
+        }
+
+        init?(_ app: NSRunningApplication) {
+            guard app.processIdentifier > 0, let url = app.executableURL else { return nil }
+            self.init(pid: app.processIdentifier, path: url.resolvingSymlinksInPath().path)
+        }
+    }
+
+    private let lock = NSLock()
+    private var known: Set<Process> = []
+
+    /// Remembers `listed` (the live processes AppKit lists now), forgets the others once
+    /// `isLive` says they are gone, and says whether any Spotify runs.
+    func running(listed: [Process], isLive: (Process) -> Bool) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let listedSet = Set(listed)
+        known = listedSet.union(known.subtracting(listedSet).filter(isLive))
+        return !known.isEmpty
+    }
+
+    /// True while `process.pid` runs `process.path`. A pid taken by another program is not it.
+    static func isLive(_ process: Process) -> Bool {
+        // PROC_PIDPATHINFO_MAXSIZE, a macro Swift does not import.
+        var buffer = [CChar](repeating: 0, count: 4096)
+        guard proc_pidpath(process.pid, &buffer, UInt32(buffer.count)) > 0 else { return false }
+        return URL(fileURLWithPath: String(cString: buffer)).resolvingSymlinksInPath().path == process.path
+    }
 }
 
 /// Distributed notifications are delivered immediately even while Tonearm is inactive,
