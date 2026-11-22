@@ -1,0 +1,72 @@
+name: Product check
+
+# A new user's whole path with the PUBLISHED release on a clean Mac: download the DMG like
+# the README says, Homebrew, first launch, the fake-Spotify end to end and idle cost, Liner
+# Notes against the slow twin, an update from the previous release through the real public
+# feed, and brew uninstall --zap. Nothing is built from source. See scripts/product-check.sh.
+#
+# Run it after a release: gh workflow run product-check.yml
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version releases/latest must be, e.g. 0.4.1. Empty means whatever it is.
+        default: ""
+      old_tag:
+        description: Release to update from, e.g. v0.4.0. Empty means the one before.
+        default: ""
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    name: Product check (published release)
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      EXPECT_VERSION: ${{ inputs.version }}
+      OLD_TAG: ${{ inputs.old_tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup
+        run: scripts/product-check.sh setup
+      # Each step below runs even if one before it failed, so one run shows every finding.
+      # A step that needs the installed app fails at once if an earlier one left none.
+      - name: 1. Install from the DMG (README)
+        if: ${{ !cancelled() }}
+        run: scripts/product-check.sh dmg
+      - name: 2. Install with Homebrew (README)
+        if: ${{ !cancelled() }}
+        run: scripts/product-check.sh brew
+      - name: 3. Launch
+        if: ${{ !cancelled() }}
+        run: scripts/product-check.sh launch
+      - name: 4. End to end with fake Spotify, and idle cost
+        if: ${{ !cancelled() }}
+        run: scripts/product-check.sh e2e
+      - name: 5. Liner Notes
+        if: ${{ !cancelled() }}
+        run: scripts/product-check.sh liner-notes
+      - name: 6. Update from the previous release through the public feed
+        if: ${{ !cancelled() }}
+        run: scripts/product-check.sh update
+      - name: 7. Uninstall with brew --zap
+        if: ${{ !cancelled() }}
+        run: scripts/product-check.sh zap
+      - name: Results
+        if: ${{ !cancelled() }}
+        run: scripts/product-check.sh summary
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: product-check
+          path: ${{ runner.temp }}/product-check/out/
+          if-no-files-found: warn
+          retention-days: 14
