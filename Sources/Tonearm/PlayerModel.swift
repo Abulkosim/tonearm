@@ -40,9 +40,22 @@ final class PlayerModel: ObservableObject {
     /// The setting is left on; the user can allow notifications in System Settings.
     @Published private(set) var notificationsDenied = false
 
+    /// What a model does. The app runs `.live`; snapshots show fixed state with `.preview`.
+    enum Mode {
+        /// Reads Spotify, follows macOS notifications, records listens, global shortcuts.
+        case live
+        /// Never talks to Spotify. State comes from `setPreview`.
+        case preview
+        /// Reads and commands go through the bridge, and nothing else: no notifications,
+        /// recorder, shortcuts or network. Tests drive the lifecycle by hand.
+        case test
+    }
+
     let bridge: SpotifyBridge
     let settings: AppSettings
-    private let live: Bool
+    private let mode: Mode
+    /// False only for previews, which must never send an Apple Event.
+    private var talksToSpotify: Bool { mode != .preview }
     private var observers: [Any] = []
     private var cancellables: Set<AnyCancellable> = []
     private var hotKeys: HotKeys?
@@ -55,8 +68,11 @@ final class PlayerModel: ObservableObject {
     private var fetchInFlight = false
     private var fetchQueued = false
     private var delayedRefresh: DispatchWorkItem?
-    /// Bumped by every local command. Fetches started before a command are stale.
-    private var commandGeneration = 0
+    /// Bumped by every local command and every notification from Spotify. A read that
+    /// started before either may predate the change, so its state is dropped and read again.
+    private var stateGeneration = 0
+    /// Bumped when Spotify stops. A read from a Spotify that has quit is dropped entirely.
+    private var runGeneration = 0
 
     private var holdPositionUntil = Date.distantPast
     private var holdVolumeUntil = Date.distantPast
@@ -100,17 +116,34 @@ final class PlayerModel: ObservableObject {
     /// events from those of other windows (`event.window === model.popoverWindow`).
     var popoverWindow: NSWindow? { trackedPopoverWindow }
 
-    init(bridge: SpotifyBridge = SpotifyBridge(), settings: AppSettings = .shared, live: Bool = true) {
+    convenience init(bridge: SpotifyBridge = SpotifyBridge(), settings: AppSettings = .shared, live: Bool = true) {
+        self.init(bridge: bridge, settings: settings, mode: live ? .live : .preview)
+    }
+
+    init(bridge: SpotifyBridge, settings: AppSettings, mode: Mode) {
         self.bridge = bridge
         self.settings = settings
-        self.live = live
-        recorder = live ? PlayRecorder.live(
+        self.mode = mode
+        recorder = mode == .live ? PlayRecorder.live(
             settings: settings, sink: ListenTee(store: HistoryStore.shared, listenBrainz: .shared)) : nil
-        guard live else { return }
+        guard mode != .preview else { return }
+        bridge.permissionPromptChanged = { [weak self] asking in self?.permissionPromptChanged(asking) }
+        if mode == .live { startLive() }
+
+        setSpotifyRunning(bridge.isRunning)
+        if spotifyRunning {
+            refresh()
+            readUntilReady()
+        } else {
+            spotifyStopped()
+        }
+    }
+
+    /// macOS notifications, ListenBrainz, global shortcuts and song notifications.
+    private func startLive() {
         // Sends what was left queued for ListenBrainz last time, if it is on.
         ListenBrainzSync.shared.start()
 
-        bridge.permissionPromptChanged = { [weak self] asking in self?.permissionPromptChanged(asking) }
         observers.append(SpotifyBridge.observeChanges { [weak self] update in
             Task { @MainActor in self?.notificationArrived(update) }
         })
@@ -148,14 +181,6 @@ final class PlayerModel: ObservableObject {
         }
 
         startExtras()
-
-        setSpotifyRunning(bridge.isRunning)
-        if spotifyRunning {
-            refresh()
-            readUntilReady()
-        } else {
-            spotifyStopped()
-        }
     }
 
     private nonisolated static func isSpotify(_ note: Notification) -> Bool {
@@ -307,7 +332,7 @@ final class PlayerModel: ObservableObject {
     /// Reads everything from Spotify once. Every read goes through here. During the quiet
     /// period after a pause or stop it waits until the period ends instead.
     func refresh() {
-        guard live else { return }
+        guard talksToSpotify else { return }
         guard spotifyRunning else { return spotifyStopped() }
         let wait = quietUntil.timeIntervalSinceNow
         if wait > 0 { return scheduleRefresh(after: wait + 0.05) }
@@ -315,11 +340,16 @@ final class PlayerModel: ObservableObject {
         fetchInFlight = true
         delayedRefresh?.cancel()
         delayedRefresh = nil
-        let generation = commandGeneration
+        let generation = stateGeneration, run = runGeneration
         bridge.fetch { [weak self] result, readAt in
             guard let self else { return }
             self.fetchInFlight = false
-            self.fetched(result, readAt: readAt, generation: generation)
+            if run == self.runGeneration {
+                self.fetched(result, readAt: readAt, generation: generation)
+            } else if self.spotifyRunning {
+                // Spotify quit and started again while this read ran. Read the new one.
+                self.fetchQueued = true
+            }
             if self.fetchQueued {
                 self.fetchQueued = false
                 self.refresh()
@@ -343,11 +373,10 @@ final class PlayerModel: ObservableObject {
         switch result {
         case .success(let p):
             status = .ready
-            isLaunching = false
-            launchTimeout?.cancel()
+            endLaunch()
             cancelStartupReads()
-            // A command was sent while this fetch ran; its answer may predate the command.
-            guard generation == commandGeneration else { fetchQueued = true; return }
+            // A command or a notification came while this fetch ran; its answer may predate it.
+            guard generation == stateGeneration else { fetchQueued = true; return }
             merge(state: p.state, track: p.track, reportedPosition: p.position, volume: p.volume,
                   modes: (p.shuffling, p.repeating), at: readAt, fromNotification: false)
             loadArtwork(p.track?.artworkURL)
@@ -369,12 +398,15 @@ final class PlayerModel: ObservableObject {
         }
     }
 
-    private func notificationArrived(_ update: NowPlayingUpdate?) {
-        guard live else { return }
+    /// Internal for tests.
+    func notificationArrived(_ update: NowPlayingUpdate?) {
+        guard talksToSpotify else { return }
         if !spotifyRunning {
             guard bridge.isRunning else { return }
             setSpotifyRunning(true)
         }
+        // A read already under way may have sampled Spotify before this change.
+        if update != nil { stateGeneration += 1 }
         if let update, status == .ready {
             var track = update.track
             if track?.id == playback.track?.id { track?.artworkURL = playback.track?.artworkURL }
@@ -437,23 +469,31 @@ final class PlayerModel: ObservableObject {
     }
 
     private func updatePolling() {
-        let interval = live ? PollPolicy.interval(spotifyRunning: spotifyRunning, windowOpen: popoverVisible,
-                                                  playing: isPlaying, ready: status == .ready) : nil
+        let interval = talksToSpotify
+            ? PollPolicy.interval(spotifyRunning: spotifyRunning, windowOpen: popoverVisible,
+                                  playing: isPlaying, ready: status == .ready)
+            : nil
         guard interval != pollInterval else { return }
         pollTimer?.invalidate()
         pollTimer = nil
         pollInterval = interval
         guard let interval else { return }
-        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+        // A timer holds only its block, so it would outlive the model and wake the app for
+        // nothing. It ends itself instead.
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] fired in
+            guard let self else { return fired.invalidate() }
+            Task { @MainActor in self.refresh() }
         }
         timer.tolerance = interval * 0.2
         RunLoop.main.add(timer, forMode: .common)
         pollTimer = timer
     }
 
+    /// The poll timer, for tests.
+    var pollTimerForTesting: Timer? { pollTimer }
+
     private func popoverVisibilityChanged() {
-        guard live else { return }
+        guard talksToSpotify else { return }
         if popoverVisible {
             if spotifyRunning { refresh() } else { spotifyStopped() }
         }
@@ -470,7 +510,8 @@ final class PlayerModel: ObservableObject {
         if spotifyRunning != running { spotifyRunning = running }
     }
 
-    private func spotifyLaunched() {
+    /// Internal for tests.
+    func spotifyLaunched() {
         setSpotifyRunning(true)
         quietUntil = .distantPast
         if status == .notInstalled { status = .notRunning }
@@ -499,15 +540,26 @@ final class PlayerModel: ObservableObject {
         startupReads = []
     }
 
-    private func spotifyTerminated() {
+    /// Internal for tests.
+    func spotifyTerminated() {
         setSpotifyRunning(bridge.isRunning)
-        if !spotifyRunning { spotifyStopped() }
+        guard !spotifyRunning else { return }
+        // Spotify quit before it answered, so it is no longer starting.
+        endLaunch()
+        spotifyStopped()
+    }
+
+    private func endLaunch() {
+        launchTimeout?.cancel()
+        launchTimeout = nil
+        if isLaunching { isLaunching = false }
     }
 
     /// Resets to the idle state. Never sends Apple Events.
     private func spotifyStopped() {
         setSpotifyRunning(false)
         if isAskingPermission { isAskingPermission = false }
+        runGeneration += 1
         fetchQueued = false
         playWhenReady = false
         quietUntil = .distantPast
@@ -590,6 +642,13 @@ final class PlayerModel: ObservableObject {
 
     // MARK: Commands
 
+    /// Every command goes through here. A preview never reaches Spotify: `swift test` on a
+    /// Mac with Spotify open used to seek and change its volume.
+    private func send(_ command: SpotifyBridge.Command, then done: @escaping () -> Void) {
+        guard talksToSpotify else { return done() }
+        bridge.send(command, then: done)
+    }
+
     func playPause() {
         guard status == .ready else { return }
         let now = Date()
@@ -597,27 +656,27 @@ final class PlayerModel: ObservableObject {
         positionDate = now
         playback.state = isPlaying ? .paused : .playing
         holdStateUntil = now.addingTimeInterval(1.5)
-        commandGeneration += 1
-        bridge.send(.playPause) { [weak self] in self?.refresh() }
+        stateGeneration += 1
+        send(.playPause) { [weak self] in self?.refresh() }
         updatePolling()
     }
 
     /// Starts playback (never pauses). Used after ⌃⌥P launched Spotify.
     private func startPlayback() {
-        commandGeneration += 1
-        bridge.send(.play) { [weak self] in self?.refresh() }
+        stateGeneration += 1
+        send(.play) { [weak self] in self?.refresh() }
     }
 
     func next() {
         guard status == .ready else { return }
-        commandGeneration += 1
-        bridge.send(.next) { [weak self] in self?.refresh() }
+        stateGeneration += 1
+        send(.next) { [weak self] in self?.refresh() }
     }
 
     func previous() {
         guard status == .ready else { return }
-        commandGeneration += 1
-        bridge.send(.previous) { [weak self] in self?.refresh() }
+        stateGeneration += 1
+        send(.previous) { [weak self] in self?.refresh() }
     }
 
     func toggleShuffle() {
@@ -635,7 +694,7 @@ final class PlayerModel: ObservableObject {
     /// Shows the new shuffle or repeat value at once; reads ignore Spotify's until it caught up.
     private func sendMode(_ command: SpotifyBridge.Command) {
         holdModesUntil = Date().addingTimeInterval(5)
-        bridge.send(command) { [weak self] in
+        send(command) { [weak self] in
             guard let self else { return }
             self.holdModesUntil = Date().addingTimeInterval(1)
             self.refresh()
@@ -649,7 +708,7 @@ final class PlayerModel: ObservableObject {
         playback.position = s
         positionDate = Date()
         holdPositionUntil = Date().addingTimeInterval(1.5)
-        commandGeneration += 1
+        stateGeneration += 1
         queuedSeek = s
         sendQueuedSeek()
         recordPlayback()
@@ -665,7 +724,7 @@ final class PlayerModel: ObservableObject {
         guard !seekInFlight, let s = queuedSeek else { return }
         queuedSeek = nil
         seekInFlight = true
-        bridge.send(.seek(s)) { [weak self] in
+        send(.seek(s)) { [weak self] in
             guard let self else { return }
             self.seekInFlight = false
             self.holdPositionUntil = Date().addingTimeInterval(1)
@@ -695,7 +754,7 @@ final class PlayerModel: ObservableObject {
         queuedVolume = nil
         volumeInFlight = true
         lastSentVolume = v
-        bridge.send(.volume(v)) { [weak self] in
+        send(.volume(v)) { [weak self] in
             guard let self else { return }
             self.volumeInFlight = false
             self.holdVolumeUntil = Date().addingTimeInterval(1)
@@ -706,13 +765,13 @@ final class PlayerModel: ObservableObject {
     /// Launches Spotify in the background without taking focus. If it is already running
     /// (still starting, say), brings it to the front instead, so the button always does something.
     func openSpotify() {
-        guard live else { return }
+        guard talksToSpotify else { return }
         launchSpotify(activate: spotifyRunning)
     }
 
     /// Brings Spotify to the front, opening its window. Launches it if it is not running.
     func showInSpotify() {
-        guard live else { return }
+        guard talksToSpotify else { return }
         launchSpotify(activate: true)
     }
 
@@ -722,7 +781,7 @@ final class PlayerModel: ObservableObject {
             launchTimeout?.cancel()
             let timeout = DispatchWorkItem { [weak self] in
                 MainActor.assumeIsolated {
-                    self?.isLaunching = false
+                    self?.endLaunch()
                     self?.playWhenReady = false
                 }
             }
@@ -731,8 +790,7 @@ final class PlayerModel: ObservableObject {
         }
         bridge.launch(activate: activate) { [weak self] ok in
             guard let self, !ok, !self.spotifyRunning else { return }
-            self.isLaunching = false
-            self.launchTimeout?.cancel()
+            self.endLaunch()
             self.spotifyStopped()
         }
     }
@@ -759,7 +817,7 @@ final class PlayerModel: ObservableObject {
     /// answered yet), then refreshes. macOS never asks twice, so after a denial this opens
     /// the Automation pane in System Settings instead.
     func requestPermission() {
-        guard live else { return }
+        guard talksToSpotify else { return }
         guard spotifyRunning else { return refresh() }
         bridge.checkPermission(ask: true) { [weak self] permission in
             guard let self else { return }

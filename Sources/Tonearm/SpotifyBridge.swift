@@ -157,7 +157,9 @@ struct PositionClock: Equatable {
 /// Talks to the Spotify desktop app through its AppleScript dictionary.
 /// Every Apple Event goes through one serial background queue. Scripts check
 /// `is running` first, so they never launch Spotify by accident.
-final class SpotifyBridge {
+///
+/// Not final: tests subclass it to stand in for Spotify (see PlayerModelTests).
+class SpotifyBridge {
     static let bundleID = "com.spotify.client"
     static let changedNotification = Notification.Name("com.spotify.client.PlaybackStateChanged")
 
