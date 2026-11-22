@@ -497,6 +497,30 @@ def purge():
     return subprocess.run(["sudo", "-n", "/usr/sbin/purge"], capture_output=True).returncode == 0
 
 
+def require_purge():
+    """purge(), but on CI a refused purge fails the check: the gated call would then read
+    from the OS cache, and pass whatever the file looks like on disk."""
+    if purge():
+        return True
+    if os.environ.get("CI"):
+        sys.exit("purge was refused, so the first stats call would not be cold; the speed gate would test nothing")
+    return False
+
+
+def cold_first_calls(app, db, n):
+    """The first all-time stats call in a new process after purge, n times."""
+    out = []
+    for _ in range(n):
+        require_purge()
+        _, err, _ = run_tonearm(app, ["--stats", "-", "--db", db, "--period", "all", "--tz", "Asia/Tashkent"])
+        out.append(timing(err, "stats ")[0])
+    return out
+
+
+def median(xs):
+    return sorted(xs)[len(xs) // 2]
+
+
 def fresh(db):
     for suffix in ("", "-wal", "-shm"):
         if os.path.exists(db + suffix):
@@ -593,7 +617,7 @@ def cmd_bench(a):
               % (stored, imp, "%.0f" % (peak / 1e6) if peak else "?", phases(err, "import:")))
         # As after an app launch: a new process, SQLite's cache empty, the OS file cache
         # dropped.
-        purged = purge()
+        purged = require_purge()
         _, err, _ = run_tonearm(a.app, ["--stats", "-", "--db", db] + periods)
         st = timing(err, "stats ")
         print("  all-time stats in the importing process %d ms; in a new process%s %s ms (first call: %s); "
@@ -606,22 +630,27 @@ def cmd_bench(a):
         warm_ms = timing(err, "warm:")[0]
         warmed = timing(err, "stats ")[0]
         print("  launch warm-up %d ms (%s), then first call %d ms" % (warm_ms, phases(err, "warm:"), warmed))
-        results[target] = (imp, st, stored, warm_ms, warmed, peak)
+        # The gated number: one cold read is at the mercy of the runner's disk, so take the
+        # median of three.
+        cold = [st[0]] + cold_first_calls(a.app, db, 2) if target == 200_000 else [st[0]]
+        results[target] = (imp, st, stored, warm_ms, warmed, peak, cold)
 
     # The same 200k import without the rewrite at the end, to show what it saves.
     d = os.path.join(a.work, "bench-200000")
     db = os.path.join(a.work, "bench-200000-uncompacted.sqlite")
     fresh(db)
     run_tonearm(a.app, ["--stats", d, "--db", db, "--no-compact", "--period", "year:2024"])
-    purge()
+    require_purge()
     _, err, _ = run_tonearm(a.app, ["--stats", "-", "--db", db] + periods)
     st_nc = timing(err, "stats ")
-    print("200k without compacting: first call after purge %d ms (%s), then %s ms"
-          % (st_nc[0], phases(err, "stats "), ", ".join(map(str, st_nc[1:3]))))
+    cold_nc = [st_nc[0]] + cold_first_calls(a.app, db, 2)
+    print("200k without compacting: first call after purge %s ms, median %d (first: %s), then %s ms"
+          % (", ".join(map(str, cold_nc)), median(cold_nc), phases(err, "stats "),
+             ", ".join(map(str, st_nc[1:3]))))
     fresh(db)
 
-    import_ms, _, n_import, _, _, peak = results[100_000]
-    _, st, n_stats, warm_ms, warmed, _ = results[200_000]
+    import_ms, _, n_import, _, _, peak, _ = results[100_000]
+    _, st, n_stats, warm_ms, warmed, _, cold = results[200_000]
 
     # The import users run: the 100k folder as a zip, unpacked first. Measured, not gated.
     zip_path = os.path.join(a.work, "bench-100000.zip")
@@ -638,12 +667,14 @@ def cmd_bench(a):
 
     cut_off_import(a.app, zip_path, zip_ms, a.work)
 
-    ok = import_ms < IMPORT_LIMIT_MS and st[0] < FIRST_CALL_LIMIT_MS
+    ok = import_ms < IMPORT_LIMIT_MS and median(cold) < FIRST_CALL_LIMIT_MS
     line = ("Liner Notes speed: import of %d listens %d ms (limit %d; %d ms from a zip, no limit; peak memory %s MB), "
-            "all-time stats on %d listens: first call in a new process after purge %d ms (limit %d; %d ms "
-            "without compacting), then %d ms; first call after the launch warm-up %d ms (warm-up %d ms, no limit)"
-            % (n_import, import_ms, IMPORT_LIMIT_MS, zip_ms, "%.0f" % (peak / 1e6) if peak else "?", n_stats, st[0],
-               FIRST_CALL_LIMIT_MS, st_nc[0], min(st[1:3]), warmed, warm_ms))
+            "all-time stats on %d listens: first call in a new process after purge, median %d ms of %s (limit %d; "
+            "median %d ms without compacting), then %d ms; first call after the launch warm-up %d ms (warm-up %d ms, "
+            "no limit)"
+            % (n_import, import_ms, IMPORT_LIMIT_MS, zip_ms, "%.0f" % (peak / 1e6) if peak else "?", n_stats,
+               median(cold), ", ".join(map(str, cold)), FIRST_CALL_LIMIT_MS, median(cold_nc), min(st[1:3]), warmed,
+               warm_ms))
     print(line)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
