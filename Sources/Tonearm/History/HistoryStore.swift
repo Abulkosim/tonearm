@@ -28,6 +28,8 @@ final class HistoryStore: @unchecked Sendable {
 
     let url: URL
     private let queue = DispatchQueue(label: "io.github.abulkosim.tonearm.history", qos: .utility)
+    /// An unpacked export this old is left over from an import that never finished.
+    static let leftoverAge: TimeInterval = 3600
     /// Opened on first use, on `queue`.
     private var database: SQLiteDB?
     /// Live listens that started before this (UTC ms) are dropped: they were deleted.
@@ -40,6 +42,8 @@ final class HistoryStore: @unchecked Sendable {
     /// Set by `Tonearm --stats`: gets "name N ms" for each part of an import, a stats call
     /// and the launch warm-up, so the speed check can say where the time goes.
     var phaseLog: ((String) -> Void)?
+    /// Where imports unpack a .zip. Tests use their own.
+    var temporaryDirectory = FileManager.default.temporaryDirectory
 
     /// Covers the player downloaded, beside the database. See `CoverStore`.
     let covers: CoverStore
@@ -127,6 +131,7 @@ final class HistoryStore: @unchecked Sendable {
     /// never makes one.
     func warm(timeZone: TimeZone = .current) {
         queue.async {
+            HistoryFiles.removeLeftovers(in: self.temporaryDirectory, olderThan: Self.leftoverAge)
             guard FileManager.default.fileExists(atPath: self.url.path) else { return }
             do {
                 try self.warmNow(timeZone: timeZone)
@@ -299,7 +304,8 @@ final class HistoryStore: @unchecked Sendable {
 
     /// Imports on the calling thread. Use `import(urls:progress:)` from the app.
     func importNow(urls: [URL], progress: ((ImportProgress) -> Void)? = nil) throws -> ImportResult {
-        let found = try HistoryFiles.collect(urls)
+        HistoryFiles.removeLeftovers(in: temporaryDirectory, olderThan: Self.leftoverAge)
+        let found = try HistoryFiles.collect(urls, temporaryDirectory: temporaryDirectory)
         defer { found.cleanUp() }
         guard !found.files.isEmpty else { throw ImportError.noHistoryFiles }
         let d = try db()
@@ -723,6 +729,8 @@ final class HistoryStore: @unchecked Sendable {
             throw SQLiteError.step("could not clear history.sqlite-wal; the database is busy")
         }
         try covers.deleteAllNow()
+        // Unpacked exports from an import that was cut off hold the same listens.
+        HistoryFiles.removeLeftovers(in: temporaryDirectory, olderThan: 0)
     }
 }
 

@@ -433,6 +433,36 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertEqual(try s.sync { try $0.countNow() }, 2)
     }
 
+    /// An import cut off by a crash or a kill leaves the unpacked export in the temporary
+    /// folder: the next import or launch removes it once it is an hour old, and delete all
+    /// removes it at once. Nothing else in the folder is touched.
+    func testUnpackedExportsLeftByACutOffImportAreRemoved() throws {
+        let tmp = dir.appendingPathComponent("tmp")
+        func folder(_ name: String, age: TimeInterval) throws -> URL {
+            let url = tmp.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            try Data("[]".utf8).write(to: url.appendingPathComponent("StreamingHistory_music_0.json"))
+            try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-age)], ofItemAtPath: url.path)
+            return url
+        }
+        let old = try folder("tonearm-import-old", age: 2 * 3600)
+        let recent = try folder("tonearm-import-recent", age: 60)
+        let other = try folder("someone-else", age: 2 * 3600)
+        try write("StreamingHistory_music_0.json", """
+        [{"endTime": "2024-03-05 10:00", "artistName": "A", "trackName": "T", "msPlayed": 60000}]
+        """)
+        let s = store()
+        s.temporaryDirectory = tmp
+        _ = try s.sync { try $0.importNow(urls: [dir.appendingPathComponent("export")]) }
+        let exists = { (u: URL) in FileManager.default.fileExists(atPath: u.path) }
+        XCTAssertFalse(exists(old))
+        XCTAssertTrue(exists(recent), "may be another import running now")
+        XCTAssertTrue(exists(other))
+        try s.sync { try $0.deleteAllNow() }
+        XCTAssertFalse(exists(recent))
+        XCTAssertTrue(exists(other))
+    }
+
     func testTimestamps() {
         XCTAssertEqual(Timestamp.parse("1970-01-01T00:00:00Z"), 0)
         XCTAssertEqual(Timestamp.parse("2024-03-01T10:03:20Z"), 1_709_287_400_000)
