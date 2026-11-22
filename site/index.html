@@ -275,6 +275,11 @@ footer a:hover { color: var(--text); }
   .features { grid-template-columns: 1fr; gap: 24px; }
   section { padding: 48px 0; }
 }
+@media (max-width: 420px) {
+  /* The brew command fits on one line on a 375 pt phone. */
+  .brew code { font-size: 12px; }
+  .brew pre { padding: 12px; }
+}
 @media (prefers-reduced-motion: reduce) {
   .button, .nav-link, footer a { transition: none; }
 }
