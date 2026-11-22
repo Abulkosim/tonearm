@@ -527,11 +527,11 @@ struct SettingsView: View {
 // MARK: - Theme
 
 private enum Theme {
-    static let accent = Color(red: 0x1E / 255, green: 0xD7 / 255, blue: 0x60 / 255)
-    static let accentHover = Color(red: 0x3B / 255, green: 0xE4 / 255, blue: 0x77 / 255)
+    static let accent = PlayerTheme.green
+    static let accentHover = PlayerTheme.greenHover
     static let secondary = Color(white: 0.70)
     static let muted = Color(white: 0.50)
-    static let hairline = Color.white.opacity(0.08)
+    static let hairline = PlayerTheme.hairline
     /// Deleting, and errors. A soft red that reads on the dark panel.
     static let danger = Color(red: 0xFF / 255, green: 0x7A / 255, blue: 0x70 / 255)
     static let ease = Animation.easeOut(duration: 0.15)
