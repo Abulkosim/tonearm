@@ -30,6 +30,8 @@ import calendar
 import json
 import os
 import re
+import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -372,12 +374,12 @@ def diff(a, b, path="", out=None):
     return out
 
 
-def run_tonearm(app, args, memory=False):
+def run_tonearm(app, args, memory=False, env=None):
     """Runs Tonearm; returns stdout, stderr, seconds, and with `memory` the peak resident
     memory in bytes, from /usr/bin/time -l (macOS)."""
     started = time.monotonic()
     cmd = (["/usr/bin/time", "-l"] if memory else []) + [app] + args
-    p = subprocess.run(cmd, capture_output=True, text=True)
+    p = subprocess.run(cmd, capture_output=True, text=True, env=env)
     sys.stderr.write(p.stderr)
     if p.returncode != 0:
         sys.exit("tonearm exited %d" % p.returncode)
@@ -507,6 +509,67 @@ IMPORT_LIMIT_MS = 10_000      # 100k listens
 FIRST_CALL_LIMIT_MS = 300     # all-time stats on 200k listens, cold
 
 
+def cut_off_import(app, zip_path, zip_ms, work):
+    """Kills Tonearm (SIGKILL, as a crash or a forced quit) in the middle of importing a zip,
+    and checks that the database is whole and has none of the half-done import, then that
+    the next import removes the unpacked export the killed one left behind."""
+    tmp = os.path.join(work, "tmp")
+    shutil.rmtree(tmp, ignore_errors=True)
+    os.makedirs(tmp)
+    env = dict(os.environ, TMPDIR=tmp + "/")
+    db = os.path.join(work, "cut-off.sqlite")
+    fresh(db)
+    # A first import, so there is something to keep.
+    small = os.path.join(work, "cut-off-first.json")
+    with open(small, "w") as f:
+        json.dump([{"endTime": "2024-03-05 10:00", "artistName": "A", "trackName": "T", "msPlayed": 60000}], f)
+    run_tonearm(app, ["--stats", small, "--db", db])
+    p = subprocess.Popen([app, "--stats", zip_path, "--db", db], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                         env=env)
+    # Past the unzip, inside the import's transaction: about 60% of a whole run.
+    time.sleep(zip_ms / 1000 * 0.6)
+    running = p.poll() is None
+    p.kill()
+    p.wait()
+    if not running:
+        sys.exit("cut-off import: the import finished before it could be killed; nothing was tested")
+    left = [n for n in os.listdir(tmp) if n.startswith("tonearm-import-")]
+    if not left:
+        # If Foundation did not take TMPDIR, the user's own temporary folder.
+        user_tmp = subprocess.run(["getconf", "DARWIN_USER_TEMP_DIR"], capture_output=True, text=True).stdout.strip()
+        if user_tmp and os.path.isdir(user_tmp):
+            left = [n for n in os.listdir(user_tmp) if n.startswith("tonearm-import-")
+                    and os.path.getmtime(os.path.join(user_tmp, n)) > time.time() - 120]
+            if left:
+                print("cut-off import: Tonearm unpacked into %s, not TMPDIR" % user_tmp)
+                tmp = user_tmp
+    con = sqlite3.connect(db)
+    check = con.execute("PRAGMA integrity_check").fetchone()[0]
+    count = con.execute("SELECT COUNT(*) FROM listens").fetchone()[0]
+    con.close()
+    problems = []
+    if check != "ok":
+        problems.append("integrity_check: %s" % check)
+    if count != 1:
+        problems.append("%d listens after the cut-off import, want the 1 from before it" % count)
+    if not left:
+        problems.append("no unpacked export left in %s, so the kill missed the import" % tmp)
+    # The next import removes what is over an hour old.
+    for n in left:
+        old = time.time() - 2 * 3600
+        os.utime(os.path.join(tmp, n), (old, old))
+    run_tonearm(app, ["--stats", small, "--db", db], env=env)
+    still = [n for n in os.listdir(tmp) if n.startswith("tonearm-import-")]
+    if still:
+        problems.append("the next import left %s in place" % still)
+    fresh(db)
+    shutil.rmtree(os.path.join(work, "tmp"), ignore_errors=True)
+    if problems:
+        sys.exit("cut-off import: " + "; ".join(problems))
+    print("cut-off import: killed after %.1f s; database ok with only the earlier listen; the next import "
+          "removed the %d unpacked export(s) left behind" % (zip_ms / 1000 * 0.6, len(left)))
+
+
 def cmd_bench(a):
     os.makedirs(a.work, exist_ok=True)
     fixture = os.path.join(HERE, "make-history-fixture.py")
@@ -572,6 +635,8 @@ def cmd_bench(a):
     _, err, _ = run_tonearm(a.app, ["--stats", zip_path, "--period", "year:2024"])
     zip_ms = timing(err, "import:")[0]
     print("zip of the 100k fixture: import %d ms, unzip included" % zip_ms)
+
+    cut_off_import(a.app, zip_path, zip_ms, a.work)
 
     ok = import_ms < IMPORT_LIMIT_MS and st[0] < FIRST_CALL_LIMIT_MS
     line = ("Liner Notes speed: import of %d listens %d ms (limit %d; %d ms from a zip, no limit; peak memory %s MB), "

@@ -232,9 +232,13 @@ struct HistoryFiles {
     var files: [URL] = []
     private var temporary: [URL] = []
 
+    /// Folders a .zip is unpacked into start with this, in `temporaryDirectory`.
+    static let unpackPrefix = "tonearm-import-"
+
     /// If it throws, every folder it unpacked is already gone: they can hold the rest of
     /// the user's Spotify data.
-    static func collect(_ urls: [URL]) throws -> HistoryFiles {
+    static func collect(_ urls: [URL], temporaryDirectory: URL = FileManager.default.temporaryDirectory)
+        throws -> HistoryFiles {
         var out = HistoryFiles()
         var done = false
         defer { if !done { out.cleanUp() } }
@@ -244,8 +248,7 @@ struct HistoryFiles {
             if isDir.boolValue {
                 out.files += folder(url)
             } else if url.pathExtension.lowercased() == "zip" {
-                let dir = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("tonearm-import-\(UUID().uuidString)", isDirectory: true)
+                let dir = temporaryDirectory.appendingPathComponent(unpackPrefix + UUID().uuidString, isDirectory: true)
                 out.temporary.append(dir)
                 try unzip(url, to: dir)
                 out.files += folder(dir)
@@ -297,5 +300,24 @@ struct HistoryFiles {
 
     func cleanUp() {
         for dir in temporary { try? FileManager.default.removeItem(at: dir) }
+    }
+
+    /// Removes unpacked exports an import left behind when Tonearm was killed or crashed
+    /// in the middle of it: they hold the user's whole Spotify download, and macOS keeps
+    /// temporary files for days. Only folders untouched for `olderThan` seconds, so an
+    /// import running in another Tonearm process (`--stats`) keeps its own. Returns how many.
+    @discardableResult
+    static func removeLeftovers(in temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+                                olderThan age: TimeInterval, now: Date = Date()) -> Int {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: temporaryDirectory.path) else { return 0 }
+        var removed = 0
+        for name in names where name.hasPrefix(unpackPrefix) {
+            let url = temporaryDirectory.appendingPathComponent(name, isDirectory: true)
+            let modified = (try? fm.attributesOfItem(atPath: url.path)[.modificationDate] as? Date) ?? .distantPast
+            guard now.timeIntervalSince(modified) >= age else { continue }
+            if (try? fm.removeItem(at: url)) != nil { removed += 1 }
+        }
+        return removed
     }
 }
