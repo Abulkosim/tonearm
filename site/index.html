@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tonearm, a menu bar mini player for Spotify on the Mac</title>
-<meta name="description" content="Tonearm is a free, open-source mini player for the Spotify desktop app. It lives in the Mac menu bar and shows the cover, title and playback controls. No account, no login.">
+<meta name="description" content="Tonearm is a free, open-source mini player for the Spotify desktop app in the Mac menu bar. It also keeps a private record of what you play and shows it as Liner Notes: your top artists, songs and albums for any week, month, year or all time.">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#161513">
 <link rel="icon" href="icon.png" type="image/png">
@@ -13,11 +13,14 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Tonearm">
 <meta property="og:title" content="Tonearm, a menu bar mini player for Spotify on the Mac">
-<meta property="og:description" content="Cover, title and playback controls in the Mac menu bar. Free and open source. No account, no login.">
+<meta property="og:description" content="A mini player for Spotify in the Mac menu bar, and Liner Notes: your listening by week, month, year or all time, kept on your Mac. Free and open source.">
 <meta property="og:url" content="https://abulkosim.github.io/tonearm/">
-<meta property="og:image" content="https://abulkosim.github.io/tonearm/icon.png">
-<meta property="og:image:alt" content="Tonearm app icon: a black record with an orange label under a metal tonearm">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="https://abulkosim.github.io/tonearm/social.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Tonearm's player open under the Mac menu bar, over the Liner Notes window showing a year of listening">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://abulkosim.github.io/tonearm/social.png">
 <style>
 :root {
   --deep: #12110f;
@@ -140,6 +143,28 @@ code {
 pre code { user-select: all; -webkit-user-select: all; }
 
 .shot { margin: 0; }
+.notes { display: grid; gap: 32px; min-width: 0; }
+.notes p {
+  margin: 0;
+  max-width: 36rem;
+  font-size: 15px;
+  line-height: 22px;
+  color: var(--secondary);
+}
+.window { margin: 0; }
+.window img {
+  display: block;
+  width: 100%;
+  height: auto;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  border-radius: 10px;
+}
+.window figcaption {
+  margin-top: 12px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--muted);
+}
 .shot img {
   display: block;
   width: 100%;
@@ -270,7 +295,7 @@ footer a:hover { color: var(--text); }
   <div class="wrap hero">
     <div>
       <h1>A mini player for Spotify in the Mac menu bar</h1>
-      <p class="lede">Click the song in the menu bar to see the cover, title and artist. Play, pause, skip, seek and change the volume without switching to the Spotify app.</p>
+      <p class="lede">Click the song in the menu bar to see the cover, title and artist. Play, pause, skip, seek and change the volume without switching to the Spotify app. Liner Notes shows what you played, by week, month, year or all time.</p>
       <a class="button" href="https://github.com/Abulkosim/tonearm/releases/latest/download/Tonearm.dmg">Download for Mac</a>
       <p class="meta">Free and open source. macOS 13 or later, Apple Silicon and Intel.</p>
       <div class="brew">
@@ -282,6 +307,19 @@ footer a:hover { color: var(--text); }
       <img src="player.png" width="412" height="600" alt="Tonearm open under the menu bar, showing the cover, song title, artist, progress bar, playback buttons and volume">
     </figure>
   </div>
+
+  <section aria-labelledby="liner-notes">
+    <div class="wrap">
+      <h2 id="liner-notes">Liner Notes</h2>
+      <div class="notes">
+        <p>Tonearm keeps a record of each song you play, in a file on your Mac. Liner Notes shows it: minutes listened, top artists, songs and albums, minutes per day, the hours you listen and your longest streak. Import your Spotify data export to see every year you've used Spotify. Share makes a picture of any period. Nothing leaves your Mac unless you turn on ListenBrainz.</p>
+        <figure class="window">
+          <img src="liner-notes.png" width="960" height="849" loading="lazy" alt="The Liner Notes window showing a year: minutes listened, plays, songs, artists and albums, the top artist, song and album, and a chart of minutes per day">
+          <figcaption>Rendered by the app from a made-up history.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
 
   <section aria-labelledby="what">
     <div class="wrap">
@@ -321,11 +359,11 @@ footer a:hover { color: var(--text); }
       <ol class="steps">
         <li>
           <span class="n">1</span>
-          <p>Open Tonearm. Tonearm is not notarized by Apple, so macOS blocks it the first time. Close the message.</p>
+          <p>Open Tonearm. It is not notarized by Apple, so macOS blocks it the first time. Close the message.</p>
         </li>
         <li>
           <span class="n">2</span>
-          <p>Open System Settings, then Privacy &amp; Security, and click Open Anyway. On macOS 13 and 14 you can right-click Tonearm in Applications and choose Open instead. Homebrew installs skip this step.</p>
+          <p>Within the hour, open System Settings, then Privacy &amp; Security. Scroll down to Security, click Open Anyway and enter your password. On macOS 13 and 14 you can Control-click Tonearm in Applications and choose Open instead. Homebrew installs skip this step.</p>
         </li>
         <li>
           <span class="n">3</span>

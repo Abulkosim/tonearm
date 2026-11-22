@@ -1,4 +1,5 @@
-# Copied in by .github/workflows/pages.yml. To preview locally:
-# cp design/icon-1024.png site/icon.png && cp docs/images/player.png site/
+# Copied in by the Pages workflow; see CONTRIBUTING.md.
 icon.png
 player.png
+liner-notes.png
+social.png
