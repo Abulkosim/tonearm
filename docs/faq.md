@@ -66,7 +66,7 @@ macOS 12 and earlier aren't supported: the player uses SwiftUI's menu bar window
 Only what is on your Mac. It has no server, no account and no analytics. It makes these network requests:
 
 - the cover image of the song playing, from the address Spotify gives
-- once a day, GitHub's list of releases, to check for an update
+- once a day, the update feed on Tonearm's latest GitHub release, to check for a new version
 - if you turn it on, your listens to ListenBrainz
 
 Liner Notes makes none. Your listening history is a file on your Mac; see the next question.
