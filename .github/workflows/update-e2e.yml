@@ -3,12 +3,16 @@ name: Update E2E
 # An old Tonearm updates itself to this commit through Sparkle, from a feed on 127.0.0.1,
 # with a throwaway certificate and EdDSA key. See scripts/update-e2e.sh.
 # release.yml calls it before publishing.
+#
+# Pull requests run it when they touch any app code, not just Updater.swift: Sparkle installs
+# only when no Tonearm window is open, so a window that opens at launch or stays open at quit
+# (Onboarding, the player, Liner Notes) can block every update.
 on:
   pull_request:
     paths:
       - scripts/**
       - Resources/**
-      - Sources/Tonearm/Updater.swift
+      - Sources/**
       - Package.swift
       - Package.resolved
       - .github/workflows/update-e2e.yml
