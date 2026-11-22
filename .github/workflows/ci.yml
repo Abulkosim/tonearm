@@ -65,8 +65,9 @@ jobs:
         with:
           name: liner-notes
           path: build/liner-notes/
-          if-no-files-found: error
-          retention-days: 14
+          # A step before it failed: say so, but don't fail a second time.
+          if-no-files-found: ${{ job.status == 'success' && 'error' || 'warn' }}
+          retention-days: 7
       - name: Render snapshots
         run: |
           build/Tonearm.app/Contents/MacOS/Tonearm --snapshot build/snapshots
@@ -76,7 +77,7 @@ jobs:
           name: snapshots
           path: build/snapshots/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
       # Every screen in every state, plus contact-sheet.png. Fails if a state is clipped.
       - name: Render every state
         run: build/Tonearm.app/Contents/MacOS/Tonearm --states build/states
@@ -85,16 +86,21 @@ jobs:
         with:
           name: states
           path: build/states/
-          if-no-files-found: error
-          retention-days: 14
+          # A step before it failed: say so, but don't fail a second time.
+          if-no-files-found: ${{ job.status == 'success' && 'error' || 'warn' }}
+          retention-days: 7
       - name: Package
         run: scripts/package.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Tonearm-app
-          path: dist/
+          # Tonearm.zip and Tonearm.dmg are copies of these under fixed names; skip them.
+          path: |
+            dist/Tonearm-*.dmg
+            dist/Tonearm-*.zip
+            dist/SHA256SUMS.txt
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
           compression-level: 0
 
   # The release path for the SELF_SIGN_CERT_P12 secret, with a throwaway certificate:
