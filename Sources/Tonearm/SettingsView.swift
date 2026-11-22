@@ -50,7 +50,7 @@ struct SettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             row("Menu bar") {
-                SegmentedChoice(selection: $settings.menuBarStyle, options: [
+                SegmentedChoice(label: "Menu bar", selection: $settings.menuBarStyle, options: [
                     .init(value: .songTitle, title: "Song title"),
                     .init(value: .iconOnly, title: "Icon only"),
                 ])
@@ -69,7 +69,7 @@ struct SettingsView: View {
             divider
 
             row("Layout") {
-                SegmentedChoice(selection: $settings.layout, options: [
+                SegmentedChoice(label: "Layout", selection: $settings.layout, options: [
                     .init(value: .large, title: "Large"),
                     .init(value: .compact, title: "Compact"),
                 ])
@@ -539,7 +539,8 @@ private enum Theme {
 
 // MARK: - Controls
 
-/// Two or more text segments; the selected one sits on a raised surface.
+/// Two or more text segments; the selected one sits on a raised surface, which slides to a
+/// new choice unless Reduce Motion is on.
 private struct SegmentedChoice<Value: Hashable>: View {
     struct Option: Identifiable {
         let value: Value
@@ -547,16 +548,19 @@ private struct SegmentedChoice<Value: Hashable>: View {
         var id: Value { value }
     }
 
+    /// What VoiceOver calls the group, like "Layout".
+    let label: String
     @Binding var selection: Value
     let options: [Option]
     @Namespace private var namespace
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 0) {
             ForEach(options) { option in
                 let selected = option.value == selection
                 Button {
-                    withAnimation(Theme.ease) { selection = option.value }
+                    withAnimation(reduceMotion ? nil : Theme.ease) { selection = option.value }
                 } label: {
                     Text(option.title)
                         .font(.system(size: 12))
@@ -577,6 +581,8 @@ private struct SegmentedChoice<Value: Hashable>: View {
         }
         .padding(2)
         .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.white.opacity(0.06)))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(label)
     }
 }
 
@@ -585,10 +591,11 @@ private struct SegmentedChoice<Value: Hashable>: View {
 struct GreenSwitch: View {
     @Binding var isOn: Bool
     let label: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button {
-            withAnimation(Theme.ease) { isOn.toggle() }
+            withAnimation(reduceMotion ? nil : Theme.ease) { isOn.toggle() }
         } label: {
             ZStack {
                 Capsule()
@@ -600,7 +607,7 @@ struct GreenSwitch: View {
             }
             .frame(width: 30, height: 18)
             .contentShape(Capsule())
-            .animation(Theme.ease, value: isOn)
+            .animation(reduceMotion ? nil : Theme.ease, value: isOn)
         }
         .buttonStyle(SwitchButtonStyle())
         .accessibilityLabel(label)

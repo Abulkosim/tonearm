@@ -6,14 +6,30 @@ struct MenuBarLabel: View {
     @ObservedObject var settings: AppSettings
 
     var body: some View {
-        if let title = currentTitle {
-            HStack(spacing: 4) {
-                Image(systemName: model.isPlaying ? "music.note" : "pause.fill")
-                Text(Self.leftToRight(title, firstPart: model.track.map { Self.singleLine($0.title) } ?? ""))
+        Group {
+            if let title = currentTitle {
+                HStack(spacing: 4) {
+                    Image(systemName: model.isPlaying ? "music.note" : "pause.fill")
+                    Text(Self.leftToRight(title, firstPart: model.track.map { Self.singleLine($0.title) } ?? ""))
+                }
+            } else {
+                Image(systemName: Self.appGlyph)
             }
-        } else {
-            Image(systemName: Self.appGlyph)
         }
+        // VoiceOver read the glyph's name ("pause") as if it were a button.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Tonearm")
+        .accessibilityValue(model.status == .ready ? Self.spokenState(model.playback) : "")
+    }
+
+    /// What VoiceOver reads after "Tonearm": the whole song, even when the title is cut short
+    /// or hidden. Pure, for tests.
+    static func spokenState(_ playback: Playback) -> String {
+        guard playback.state != .stopped, let track = playback.track else { return "" }
+        let title = singleLine(track.title), artist = singleLine(track.artist)
+        guard !title.isEmpty || !artist.isEmpty else { return "" }
+        let song = title.isEmpty ? artist : artist.isEmpty ? title : "\(title) by \(artist)"
+        return (playback.state == .playing ? "Playing " : "Paused, ") + song
     }
 
     private var currentTitle: String? {
