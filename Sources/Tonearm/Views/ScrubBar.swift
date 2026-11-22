@@ -82,15 +82,14 @@ struct ScrubBar: View {
         .onChange(of: value) { newValue in
             if let p = pendingValue, abs(newValue - p) < 0.02 { pendingValue = nil }
         }
-        .accessibilityElement()
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityValue(accessibilityValueText)
-        .accessibilityAdjustableAction { direction in
-            switch direction {
-            case .increment: onCommit(min(1, value + step))
-            case .decrement: onCommit(max(0, value - step))
-            @unknown default: break
+        // VoiceOver sees a slider. Without this AppKit reported an element of unknown role and
+        // no value, so VoiceOver read the name alone, not the position or the volume.
+        .accessibilityRepresentation {
+            Slider(value: Binding(get: { shown }, set: { onCommit(min(max($0, 0), 1)) }), in: 0...1, step: step) {
+                Text(accessibilityLabel)
             }
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityValue(accessibilityValueText)
         }
     }
 

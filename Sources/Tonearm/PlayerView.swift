@@ -423,6 +423,7 @@ struct PlayerView: View {
                     enabled: model.track != nil,
                     action: model.showInSpotify
                 )
+                .accessibilityHint(model.track == nil ? "" : "Opens the song in Spotify")
                 // The full title, for one cut short.
                 .help(model.track?.title ?? "")
                 FadingLine(Text(artistText)
@@ -554,7 +555,7 @@ struct PlayerView: View {
         ScrubBar(
             value: duration > 0 ? position / duration : 0,
             accessibilityLabel: "Playback position",
-            accessibilityValueText: "\(PlayerTheme.time(position)) of \(PlayerTheme.time(duration))",
+            accessibilityValueText: Self.positionDescription(position, duration: duration, hasTrack: model.track != nil),
             forceActive: preview?.progressHover ?? false,
             step: duration > 0 ? min(1, KeyCommand.seekStep / duration) : 0.05,
             onScrub: { scrubSeconds = $0 * duration },
@@ -656,6 +657,15 @@ struct PlayerView: View {
         } else {
             model.setVolume(max(volumeBeforeMute, 10))
         }
+    }
+
+    /// What VoiceOver reads for the progress bar. Pure, for tests.
+    static func positionDescription(_ position: Double, duration: Double, hasTrack: Bool) -> String {
+        guard hasTrack else { return "Nothing playing" }
+        let hours = duration >= 3600 || position >= 3600
+        // Spotify gave no length (some ads and streams): only the time played is known.
+        guard duration > 0 else { return PlayerTheme.time(position, hours: hours) + " played" }
+        return "\(PlayerTheme.time(position, hours: hours)) of \(PlayerTheme.time(duration, hours: hours))"
     }
 
     static func volumeSymbol(_ level: Int) -> String {
