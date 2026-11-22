@@ -10,7 +10,8 @@
 # 4. Install OLD in a temporary Applications folder and open it. Sparkle checks at once
 #    (there is no last check date), downloads, and Updater.swift installs right away because
 #    no Tonearm window is open.
-# 5. Assert the installed app is NEW, its signature verifies, and it stays up 10 s.
+# 5. Assert the installed app is NEW, its signature verifies, and it stays up 10 s with its
+#    main thread answering (scripts/ping-app.sh).
 # 6. Again, with OLD built from the newest release tag older than NEW, so the updater code
 #    that runs is the one users have installed. Its Info.plist gets the test feed, key and
 #    build 1, and the app is signed again with SIGN_IDENTITY.
@@ -92,6 +93,9 @@ derived="$(SEED="$seed" scripts/ed25519-public-key.sh)"
 [ "$derived" = "$public_key" ] || fail "generate_keys printed $public_key, but the exported key derives $derived"
 say "EdDSA key from generate_keys: $public_key"
 
+# Before any Tonearm starts: the main thread check below sends it Apple Events.
+scripts/ping-app.sh prepare
+
 # Serve the feed on a free port.
 port="$(python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
 python3 -I -u -m http.server "$port" --bind 127.0.0.1 --directory "$work/serve" > "$work/logs/http.log" 2>&1 &
@@ -165,7 +169,7 @@ update_from() { # old app, label
   grep -q "GET /appcast.xml" "$work/logs/http-$label.log" || fail "$label: Sparkle never fetched the feed"
   grep -q "GET /$(basename "$zip")" "$work/logs/http-$label.log" || fail "$label: Sparkle never downloaded the update"
 
-  # NEW must be relaunched (by Sparkle) and stay up.
+  # NEW must be relaunched (by Sparkle), stay up and keep its main thread answering.
   for _ in $(seq 1 60); do
     new_pid="$(pgrep -f "$exe" | grep -vx "$old_pid" | head -n 1 || true)"
     [ -n "$new_pid" ] && break
@@ -173,9 +177,8 @@ update_from() { # old app, label
   done
   [ -n "$new_pid" ] || fail "$label: NEW was not relaunched after the update"
   if kill -0 "$old_pid" 2> /dev/null; then fail "$label: OLD ($old_pid) is still running"; fi
-  sleep 10
-  kill -0 "$new_pid" 2> /dev/null || fail "$label: NEW ($new_pid) exited within 10 s"
-  say "$label: NEW running as $new_pid for 10 s"
+  answers="$(scripts/ping-app.sh "$new_pid" 10)" || fail "$label: NEW ($new_pid) exited or hung within 10 s"
+  say "$label: NEW running as $new_pid for 10 s; $answers"
 
   codesign --verify --deep --strict --verbose=2 "$installed"
   EXPECT_SIGNING="$EXPECT_SIGNING" EXPECT_VERSION="$new_version" EXPECT_BUILD="$new_build" \
