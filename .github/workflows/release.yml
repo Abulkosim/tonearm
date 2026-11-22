@@ -31,6 +31,7 @@ on:
       - scripts/ed25519-public-key.sh
       - scripts/require-ci.sh
       - scripts/live-launch.sh
+      - scripts/ping-app.sh
       - scripts/allow-apple-events.sh
       - Tools/LaunchPing/**
       - Package.swift
