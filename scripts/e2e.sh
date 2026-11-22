@@ -111,7 +111,8 @@ allow_apple_events() {
   local db="$HOME/Library/Application Support/com.apple.TCC/TCC.db" client
   for client in /usr/bin/osascript /bin/bash /opt/hca/hosted-compute-agent \
                 /usr/local/opt/runner/provisioner/provisioner; do
-    sudo sqlite3 "$db" "insert or replace into access
+    # Waits for the lock if tccd holds it (see allow-apple-events.sh).
+    sudo sqlite3 -cmd '.timeout 30000' "$db" "insert or replace into access
       (service, client, client_type, auth_value, auth_reason, auth_version, csreq, policy_id,
        indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity,
        flags, last_modified)
