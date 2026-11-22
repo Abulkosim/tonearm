@@ -241,6 +241,8 @@ struct LinerNotesView: View {
                 .foregroundColor(.white.opacity(SleeveColors.secondaryOpacity))
                 .fixedSize(horizontal: false, vertical: true)
         }
+        // One element: "Minutes listened, 12,345, 205 hours of music in 2024".
+        .accessibilityElement(children: .combine)
     }
 
     /// Plays, songs, artists and albums on the sleeve, in two or four columns.
