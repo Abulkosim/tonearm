@@ -57,7 +57,7 @@ The cost: Tonearm can only do what Spotify's AppleScript commands allow. It can'
 
 Any Mac with macOS 13 Ventura or later, Apple Silicon or Intel. There is one download; it contains both.
 
-The automated tests run on GitHub's Apple Silicon Macs with macOS 15, because GitHub [retired](https://github.blog/changelog/2025-09-19-github-actions-macos-13-runner-image-is-closing-down/) its macOS 13 machines and [then](https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement) its macOS 14 ones. So macOS 13 and 14 and Intel Macs get less testing. If something is wrong there, please [open an issue](https://github.com/Abulkosim/tonearm/issues/new/choose).
+The automated tests run on macOS 15: all of them on GitHub's Apple Silicon Macs, and the tests, a build and a launch on an Intel one. GitHub [retired](https://github.blog/changelog/2025-09-19-github-actions-macos-13-runner-image-is-closing-down/) its macOS 13 machines and [then](https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement) its macOS 14 ones, so nothing runs automatically on macOS 13 or 14. If something is wrong there, please [open an issue](https://github.com/Abulkosim/tonearm/issues/new/choose).
 
 macOS 12 and earlier aren't supported: the player uses SwiftUI's menu bar window, which first came in macOS 13.
 
