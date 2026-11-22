@@ -16,16 +16,21 @@ shift
 [[ "$target" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "allow-apple-events: bad bundle id $target" >&2; exit 1; }
 
 db="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
+sql="begin;"
 for client in /usr/bin/osascript /bin/bash /opt/hca/hosted-compute-agent \
               /usr/local/opt/runner/provisioner/provisioner "$@"; do
   [[ "$client" != *"'"* ]] || { echo "allow-apple-events: bad client path $client" >&2; exit 1; }
-  sudo sqlite3 "$db" "insert or replace into access
+  sql="$sql insert or replace into access
     (service, client, client_type, auth_value, auth_reason, auth_version, csreq, policy_id,
      indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity,
      flags, last_modified)
     values ('kTCCServiceAppleEvents', '$client', 1, 2, 3, 1, NULL, NULL,
      0, '$target', NULL, 0, cast(strftime('%s','now') as integer));"
 done
+# tccd may hold the database lock for a moment: a write then failed with "database is
+# locked" (release dry run 45037275623). Wait for the lock, up to 30 s, instead of failing,
+# and write every row in one transaction.
+sudo sqlite3 -cmd '.timeout 30000' "$db" "$sql commit;"
 # tccd caches decisions.
 sudo killall tccd 2> /dev/null || true
 sleep 1
