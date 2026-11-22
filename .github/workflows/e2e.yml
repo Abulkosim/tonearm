@@ -53,7 +53,7 @@ jobs:
           fi
           files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')"
           echo "$files"
-          pattern='^(Sources/|Tools/|Resources/|Package\.(swift|resolved)$|scripts/(e2e|build-app)\.sh$|\.github/workflows/e2e\.yml$)'
+          pattern='^(Sources/|Tools/|Resources/|Package\.(swift|resolved)$|scripts/(e2e|build-app|idle-cost)\.sh$|\.github/workflows/e2e\.yml$)'
           if grep -qE "$pattern" <<< "$files"; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
@@ -75,6 +75,10 @@ jobs:
         run: scripts/build-app.sh
       - name: Run scenarios
         run: TONEARM_APP=build/Tonearm.app scripts/e2e.sh
+      # The real app with the player closed, 60 s each with Spotify not running, paused and
+      # playing: CPU time, wakeups and reads against a budget. Uses the fake from the step above.
+      - name: Idle cost
+        run: scripts/idle-cost.sh build/Tonearm.app build/e2e/report
       - name: Summary
         if: always()
         run: |
