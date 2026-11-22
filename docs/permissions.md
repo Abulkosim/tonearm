@@ -29,7 +29,7 @@ From v0.3.1 on, every release is signed with the same certificate and updates ar
 
 You may be asked once more in these cases:
 
-- You move from v0.2.0 or earlier to v0.3.1. Those builds had a different signature. Click OK when macOS asks.
+- You move from v0.2.0 or earlier to v0.3.1 or later. Those builds had a different signature. Click OK when macOS asks.
 - You build Tonearm from source. Local builds are signed ad hoc, and each build looks like a new app to macOS.
 
 If you missed the prompt, or Tonearm says Spotify isn't running while it is, follow the reset steps above.

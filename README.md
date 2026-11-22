@@ -60,7 +60,7 @@ Share makes a picture of the period to post or send:
 
 The history is an SQLite file in `~/Library/Application Support/Tonearm`. Liner Notes makes no network requests. In Settings → History you can export everything as CSV or JSON, delete it all, or turn recording off. If you use [ListenBrainz](https://listenbrainz.org), Tonearm can send your listens there too; that is off until you paste your token. Details in [docs/history.md](docs/history.md).
 
-The pictures here are rendered by the app from a made-up history; the artists in them don't exist.
+The pictures here are rendered by the app from a made-up history. The artists and songs in them are invented.
 
 ## Updates
 
