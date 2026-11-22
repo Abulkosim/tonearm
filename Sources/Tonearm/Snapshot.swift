@@ -143,10 +143,9 @@ enum Snapshot {
     /// Puts the popover under a mock menu bar on a plain desktop, the way people see it.
     /// `bar` sets the menu bar title options; the label comes from `MenuBarLabel`.
     /// `minHeight` pads the desktop below, so frames of different scenes match in size.
-    /// `width` widens the desktop to the right.
     @MainActor
     private static func framed(_ model: PlayerModel, _ preview: PlayerView.Preview,
-                               bar: AppSettings? = nil, minHeight: CGFloat = 0, width: CGFloat? = nil) -> AnyView {
+                               bar: AppSettings? = nil, minHeight: CGFloat = 0) -> AnyView {
         let margin: CGFloat = 56
         let settings = bar ?? plainBar()
         let popover = PlayerView(preview: preview).environmentObject(model)
@@ -160,7 +159,7 @@ enum Snapshot {
                     .padding(.leading, margin)
                     .padding(.bottom, margin)
             }
-            .frame(width: width ?? 300 + margin * 2, alignment: .leading)
+            .frame(width: 300 + margin * 2, alignment: .leading)
             .frame(minHeight: minHeight, alignment: .top)
             .background(desktop)
             .environment(\.colorScheme, .dark)
@@ -360,11 +359,12 @@ extension Snapshot {
     /// Their covers: the player's sample covers.
     static let demoCovers: [SampleCover] = [.teal, .warm]
 
-    /// The animation's canvas, in points: a strip of desktop under the menu bar, wide enough
-    /// for the Liner Notes window at its smallest width.
-    static let demoCanvas = CGSize(width: 920, height: 724)
-    /// The Liner Notes window in the animation: its minimum width, and a little taller.
-    static let demoWindow = CGSize(width: 840, height: 600)
+    /// The animation's canvas, in points: the desktop under the menu bar, with the Liner Notes
+    /// window open at its smallest width and the player open over it.
+    static let demoCanvas = CGSize(width: 900, height: 724)
+    static let demoWindow = CGSize(width: LinerNotesWindow.minSize.width, height: 600)
+    /// The website's social preview, 1200 x 630 pixels.
+    static let socialCanvas = CGSize(width: 1200, height: 630)
 
     @MainActor
     static func renderDemo(to dir: URL) {
@@ -380,21 +380,21 @@ extension Snapshot {
         let notes = history.model
         guard let stats = notes.stats else { fail("the sample history has no stats") }
 
-        // The animation: a song plays, the next one fades in with its own colors, then the
-        // Liner Notes window opens over the desktop.
-        let playing = PlayerView.Preview(shuffling: true)
-        func playerFrame(_ song: Int, at seconds: Double) -> CGImage {
+        // The animation: a song plays over the Liner Notes window, the next one fades in with
+        // its own colors, then the player closes and leaves Liner Notes in front.
+        func frame(song: Int, open: Bool, at seconds: Double) -> CGImage {
             let start: Double = song == 0 ? 83 : 4
-            let view = framed(model(.playing, cover: demoCovers[song], song: demoSongs[song], position: start + seconds),
-                              playing, minHeight: demoCanvas.height, width: demoCanvas.width)
+            let player = model(.playing, cover: demoCovers[song], song: demoSongs[song], position: start + seconds)
+            let view = desktopScene(notes, player: player, open: open, canvas: demoCanvas,
+                                    window: demoWindow, windowLeading: 40)
             guard let cg = image(view) else { fail("render failed for a demo frame") }
             return cg
         }
-        guard let notesFrame = image(linerNotesScene(notes)) else { fail("render failed for the Liner Notes frame") }
+        let notesFrame = frame(song: 1, open: false, at: 0)
         let scenes: [(seconds: Double, frame: (Double) -> CGImage)] = [
-            (2.5, { playerFrame(0, at: $0) }),
-            (2.5, { playerFrame(1, at: $0) }),
-            (4, { _ in notesFrame }),
+            (2.5, { frame(song: 0, open: true, at: $0) }),
+            (2.5, { frame(song: 1, open: true, at: $0) }),
+            (3.5, { _ in notesFrame }),
         ]
         let fadeFrames = 3
         var index = 0
@@ -419,14 +419,18 @@ extension Snapshot {
 
         // The stills.
         let first = model(.playing, cover: demoCovers[0], song: demoSongs[0])
+        let playing = PlayerView.Preview(shuffling: true)
         write(framed(first, playing), to: dir.appendingPathComponent("player.png"))
         write(framed(first, PlayerView.Preview(layout: .compact, shuffling: true)),
               to: dir.appendingPathComponent("compact.png"))
-        write(AnyView(window(notes, size: LinerNotesWindow.defaultSize).environment(\.colorScheme, .dark)),
+        write(AnyView(window(notes, size: LinerNotesWindow.defaultSize, active: true)
+                .environment(\.colorScheme, .dark)),
               to: dir.appendingPathComponent("liner-notes.png"))
         guard let card = ShareCard.make(notes)?.render() else { fail("no share card for the sample history") }
         write(card, to: dir.appendingPathComponent("share-card.png"))
-        let social = ImageRenderer(content: socialScene(notes, player: first))
+        // Its Liner Notes window starts under the player, so the player hides the window's buttons.
+        let social = ImageRenderer(content: desktopScene(notes, player: first, open: true, canvas: socialCanvas,
+                                                         window: CGSize(width: 880, height: 600), windowLeading: 272))
         social.scale = 1
         guard let socialImage = social.cgImage else { fail("render failed for social.png") }
         write(socialImage, to: dir.appendingPathComponent("social.png"))
@@ -461,18 +465,23 @@ extension Snapshot {
         if stale { exit(1) }
     }
 
-    /// The Liner Notes window, with a title bar like the real one, in dark mode.
+    /// The Liner Notes window, with a title bar like the real one, in dark mode. An inactive
+    /// window has grey buttons and a dimmer title, as when the player is open over it.
     @MainActor
-    private static func window(_ notes: LinerNotesModel, size: CGSize) -> some View {
-        VStack(spacing: 0) {
+    private static func window(_ notes: LinerNotesModel, size: CGSize, active: Bool) -> some View {
+        let lights = active
+            ? [Color(red: 1, green: 0.37, blue: 0.34), Color(red: 1, green: 0.74, blue: 0.18),
+               Color(red: 0.16, green: 0.78, blue: 0.25)]
+            : Array(repeating: Color.white.opacity(0.22), count: 3)
+        return VStack(spacing: 0) {
             ZStack {
                 Text("Liner Notes")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(.white.opacity(active ? 0.55 : 0.35))
                 HStack(spacing: 8) {
-                    Circle().fill(Color(red: 1, green: 0.37, blue: 0.34)).frame(width: 12, height: 12)
-                    Circle().fill(Color(red: 1, green: 0.74, blue: 0.18)).frame(width: 12, height: 12)
-                    Circle().fill(Color(red: 0.16, green: 0.78, blue: 0.25)).frame(width: 12, height: 12)
+                    Circle().fill(lights[0]).frame(width: 12, height: 12)
+                    Circle().fill(lights[1]).frame(width: 12, height: 12)
+                    Circle().fill(lights[2]).frame(width: 12, height: 12)
                 }
                 .padding(.leading, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -490,53 +499,34 @@ extension Snapshot {
             .strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
     }
 
-    /// The last scene of the animation: the player has closed and Liner Notes is open.
+    /// A desktop with the Liner Notes window open, and the player open over it when `open`.
+    /// The canvas cuts off whatever doesn't fit, like a crop of the screen.
     @MainActor
-    private static func linerNotesScene(_ notes: LinerNotesModel) -> AnyView {
-        let player = model(.playing, cover: demoCovers[1], song: demoSongs[1])
+    private static func desktopScene(_ notes: LinerNotesModel, player: PlayerModel, open: Bool, canvas: CGSize,
+                                     window size: CGSize, windowLeading: CGFloat) -> AnyView {
+        let margin: CGFloat = 56
         return AnyView(
-            VStack(spacing: 0) {
-                menuBar(leading: 56 - 8, open: false) { MenuBarLabel(model: player, settings: plainBar()) }
-                window(notes, size: demoWindow)
-                    .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
-                    .padding(.top, 28)
-                Spacer(minLength: 0)
+            ZStack(alignment: .topLeading) {
+                desktop
+                window(notes, size: size, active: !open)
+                    .shadow(color: .black.opacity(0.45), radius: 24, y: 12)
+                    .padding(.leading, windowLeading)
+                    .padding(.top, 28 + 28)
+                VStack(alignment: .leading, spacing: 0) {
+                    menuBar(leading: margin - 8, open: open) { MenuBarLabel(model: player, settings: plainBar()) }
+                    if open {
+                        PlayerView(preview: PlayerView.Preview(shuffling: true)).environmentObject(player)
+                            .popoverWindowShape()
+                            .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
+                            .padding(.top, 6)
+                            .padding(.leading, margin)
+                    }
+                }
             }
-            .frame(width: demoCanvas.width, height: demoCanvas.height)
-            .background(desktop)
+            .frame(width: canvas.width, height: canvas.height, alignment: .topLeading)
+            .clipped()
             .environment(\.colorScheme, .dark)
         )
-    }
-
-    /// The website's social preview, 1200 x 630: the player open over the Liner Notes window.
-    @MainActor
-    private static func socialScene(_ notes: LinerNotesModel, player: PlayerModel) -> some View {
-        let size = CGSize(width: 1200, height: 630)
-        return ZStack(alignment: .topLeading) {
-            desktop
-            window(notes, size: demoWindow)
-                .shadow(color: .black.opacity(0.45), radius: 24, y: 12)
-                .padding(.leading, size.width - demoWindow.width - 48)
-                .padding(.top, 64)
-            framedOver(player)
-        }
-        .frame(width: size.width, height: size.height, alignment: .topLeading)
-        .clipped()
-        .environment(\.colorScheme, .dark)
-    }
-
-    /// The menu bar across the whole width and the open player under it, with no desktop
-    /// behind, to lay over another picture.
-    @MainActor
-    private static func framedOver(_ player: PlayerModel) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            menuBar(leading: 56 - 8) { MenuBarLabel(model: player, settings: plainBar()) }
-            PlayerView(preview: PlayerView.Preview(shuffling: true)).environmentObject(player)
-                .popoverWindowShape()
-                .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
-                .padding(.top, 6)
-                .padding(.leading, 56)
-        }
     }
 
     /// Compares two PNGs pixel by pixel. They count as the same when they have the same size
