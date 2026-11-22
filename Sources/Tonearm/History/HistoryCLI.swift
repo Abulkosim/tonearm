@@ -10,6 +10,8 @@ import Foundation
 /// month:2024-03, year:2024, all. Default: all, in the Mac's time zone. `--stats -` imports
 /// nothing and reads the --db as it is, so a new process can time its first stats. --warm
 /// first does what the app does at launch (`HistoryStore.warmNow`) and times it.
+/// --no-compact skips the rewrite after an import (`HistoryStore.compactNow`), to measure
+/// it. --phases logs each part of an import, a stats call and the warm-up as "phase ...".
 enum HistoryCLI {
     static func run(_ args: [String]) -> Int32 {
         var inputs: [URL] = []
@@ -21,6 +23,8 @@ enum HistoryCLI {
         var exportPath: String?
         var readOnly = false
         var warm = false
+        var compact = true
+        var phases = false
         var i = 0
         func value() -> String? {
             i += 1
@@ -47,6 +51,10 @@ enum HistoryCLI {
                 json = true
             case "--warm":
                 warm = true
+            case "--no-compact":
+                compact = false
+            case "--phases":
+                phases = true
             case "--db":
                 dbPath = value()
             case "--export":
@@ -68,6 +76,8 @@ enum HistoryCLI {
         defer { try? FileManager.default.removeItem(at: tempDir) }
         let dbURL = dbPath.map { URL(fileURLWithPath: $0) } ?? tempDir.appendingPathComponent("history.sqlite")
         let store = HistoryStore(url: dbURL)
+        store.compactsAfterImport = compact
+        if phases { store.phaseLog = { log("phase " + $0) } }
 
         do {
             var started = DispatchTime.now()

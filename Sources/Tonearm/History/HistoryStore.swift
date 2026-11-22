@@ -33,6 +33,13 @@ final class HistoryStore: @unchecked Sendable {
     /// Live listens that started before this (UTC ms) are dropped: they were deleted.
     private var liveFloor: Int64 = .min
     private var catalogCache: StatsEngine.Catalog?
+    /// After an import that changed something, rewrite the file so each table and index
+    /// lies in one piece (see `compactNow`). `Tonearm --stats --no-compact` turns it off, to
+    /// measure what it saves.
+    var compactsAfterImport = true
+    /// Set by `Tonearm --stats`: gets "name N ms" for each part of an import, a stats call
+    /// and the launch warm-up, so the speed check can say where the time goes.
+    var phaseLog: ((String) -> Void)?
 
     /// Covers the player downloaded, beside the database. See `CoverStore`.
     let covers: CoverStore
@@ -133,13 +140,24 @@ final class HistoryStore: @unchecked Sendable {
     /// and the stats of the period the window opens on. Returns that period.
     @discardableResult
     func warmNow(timeZone: TimeZone, now: Date = Date()) throws -> Period? {
-        let years = try yearsNow(timeZone: timeZone)
-        _ = try countNow()
-        _ = try artworkNow()
+        let years = try timed("warm years") { try yearsNow(timeZone: timeZone) }
+        _ = try timed("warm count") { try countNow() }
+        _ = try timed("warm covers") { try artworkNow() }
         guard !years.isEmpty else { return nil }
         let period = Period.opening(.year, years: years, now: now, timeZone: timeZone)
         _ = try statsNow(for: period, timeZone: timeZone)
         return period
+    }
+
+    /// Runs `body`, and logs how long it took when `phaseLog` is set.
+    private func timed<T>(_ name: String, _ body: () throws -> T) rethrows -> T {
+        guard let phaseLog else { return try body() }
+        let start = DispatchTime.now()
+        defer {
+            let ms = Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000
+            phaseLog(String(format: "%@ %.1f ms", name, ms))
+        }
+        return try body()
     }
 
     // MARK: Live recording
@@ -287,8 +305,9 @@ final class HistoryStore: @unchecked Sendable {
         let d = try db()
         var result = ImportResult()
         let before = try countNow()
+        let changesBefore = d.totalChanges
 
-        try d.transaction {
+        try timed("import rows") { try d.transaction {
             var tracks: [TrackKey: Int64] = [:]
             let all = try d.prepare("SELECT id, kind, title, artist, album, uri FROM tracks")
             all.bind([])
@@ -345,9 +364,17 @@ final class HistoryStore: @unchecked Sendable {
                 progress?(ImportProgress(filesDone: i + 1, filesTotal: found.files.count, rowsRead: result.rows))
             }
             result.replacedLive = try live.deleteClaimed(d)
-        }
+        } }
         if result.files == 0 { throw ImportError.noHistoryFiles }
         catalogCache = nil
+        if compactsAfterImport && d.totalChanges != changesBefore {
+            do {
+                try timed("import compact") { try compactNow() }
+            } catch {
+                // The listens are in; only the speed of the first read after a launch suffers.
+                NSLog("Tonearm: could not compact the history after an import: %@", "\(error)")
+            }
+        }
         let after = try countNow()
         result.added = after - before + result.replacedLive
         result.duplicates = result.rows - result.skipped - result.added
@@ -552,8 +579,8 @@ final class HistoryStore: @unchecked Sendable {
     }
 
     func statsNow(for period: Period, timeZone: TimeZone) throws -> Stats {
-        let d = try db()
-        let catalog = try catalogCache ?? StatsEngine.Catalog.load(d)
+        let d = try timed("stats open") { try db() }
+        let catalog = try timed("stats catalog") { try catalogCache ?? StatsEngine.Catalog.load(d) }
         catalogCache = catalog
         // Every listen up to two days past the period, sorted: earlier ones tell which
         // artists are new. The extra days cover any time zone offset.
@@ -564,13 +591,32 @@ final class HistoryStore: @unchecked Sendable {
             values.append(.int(Int64(days.upperBound.number + 2) * 86_400_000))
         }
         sql += " ORDER BY started_at"
-        let s = try d.prepare(sql)
-        s.bind(values)
-        var rows = StatsEngine.Rows()
-        while try s.step() {
-            rows.append(start: s.int(0), ms: s.int(1), track: s.int(2))
+        let rows = try timed("stats rows") {
+            let s = try d.prepare(sql)
+            s.bind(values)
+            var rows = StatsEngine.Rows()
+            while try s.step() {
+                rows.append(start: s.int(0), ms: s.int(1), track: s.int(2))
+            }
+            return rows
         }
-        return StatsEngine.stats(rows: rows, catalog: catalog, period: period, timeZone: timeZone)
+        return timed("stats compute") {
+            StatsEngine.stats(rows: rows, catalog: catalog, period: period, timeZone: timeZone)
+        }
+    }
+
+    /// Rewrites the database file in order, each table and index in one run of pages, and
+    /// empties the write-ahead log.
+    ///
+    /// An import writes listens, tracks and three indexes at once, so their pages end up
+    /// interleaved across the file. The first stats call after a launch then reads the time
+    /// index and the tracks page by page from all over the disk: 300 to 800 ms at 217k
+    /// listens on CI, against 40 ms once the pages are cached. In order, the same read is a
+    /// few long sequential ones. Live recording appends in time order, so it stays close.
+    func compactNow() throws {
+        let d = try db()
+        try d.exec("VACUUM")
+        _ = try d.int("PRAGMA wal_checkpoint(TRUNCATE)")
     }
 
     // MARK: Export

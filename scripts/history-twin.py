@@ -10,7 +10,8 @@ any difference.
       compares every period and time zone below, and checks that no ip_addr, conn_country
       or platform value reached the database or an export.
   history-twin.py bench --app TONEARM_BINARY --work DIR
-      Times an import of 100k listens and all-time stats on 200k, and fails over 5 s or 300 ms.
+      Times an import of 100k listens, and the first all-time stats call on 200k in a new
+      process with the OS file cache dropped. Fails over 10 s or 300 ms.
 
 The rules (Sources/Tonearm/History/StatsEngine.swift and HistoryImport.swift follow them):
   Files: names starting with StreamingHistory, Streaming_History_ or endsong, ending .json,
@@ -371,13 +372,20 @@ def diff(a, b, path="", out=None):
     return out
 
 
-def run_tonearm(app, args):
+def run_tonearm(app, args, memory=False):
+    """Runs Tonearm; returns stdout, stderr, seconds, and with `memory` the peak resident
+    memory in bytes, from /usr/bin/time -l (macOS)."""
     started = time.monotonic()
-    p = subprocess.run([app] + args, capture_output=True, text=True)
+    cmd = (["/usr/bin/time", "-l"] if memory else []) + [app] + args
+    p = subprocess.run(cmd, capture_output=True, text=True)
     sys.stderr.write(p.stderr)
     if p.returncode != 0:
         sys.exit("tonearm exited %d" % p.returncode)
-    return p.stdout, p.stderr, time.monotonic() - started
+    elapsed = time.monotonic() - started
+    if not memory:
+        return p.stdout, p.stderr, elapsed
+    peak = re.search(r"(\d+)\s+maximum resident set size", p.stderr)
+    return p.stdout, p.stderr, elapsed, int(peak.group(1)) if peak else None
 
 
 def cmd_stats(a):
@@ -469,46 +477,88 @@ def timing(stderr, prefix):
     return [int(re.search(r"(\d+) ms$", line).group(1)) for line in stderr.splitlines() if line.startswith(prefix)]
 
 
+def phases(stderr, prefix):
+    """The "phase NAME N ms" lines up to the first line starting with `prefix`: the parts of
+    that call."""
+    out = []
+    for line in stderr.splitlines():
+        if line.startswith("phase "):
+            out.append(line[len("phase "):])
+        elif line.startswith(prefix):
+            break
+    return ", ".join(out)
+
+
+def purge():
+    """Drops the OS file cache, as after a restart, if purge may run without a password (it
+    can on CI runners). Returns whether it ran."""
+    return subprocess.run(["sudo", "-n", "/usr/sbin/purge"], capture_output=True).returncode == 0
+
+
+def fresh(db):
+    for suffix in ("", "-wal", "-shm"):
+        if os.path.exists(db + suffix):
+            os.remove(db + suffix)
+
+
+# Limits. The first stats call in a new process, with the OS file cache dropped, is what
+# someone sees opening Liner Notes right after a restart.
+IMPORT_LIMIT_MS = 10_000      # 100k listens
+FIRST_CALL_LIMIT_MS = 300     # all-time stats on 200k listens, cold
+
+
 def cmd_bench(a):
     os.makedirs(a.work, exist_ok=True)
     fixture = os.path.join(HERE, "make-history-fixture.py")
     results = {}
     # The generator stops at its end date, and drops duplicates and skips, so ask for
     # a quarter more rows than needed and check how many were stored.
-    periods = ["--period", "all,all,all,year:2024", "--tz", "Asia/Tashkent", "--json"]
+    periods = ["--period", "all,all,all,year:2024", "--tz", "Asia/Tashkent", "--json", "--phases"]
     for target, ask in ((100_000, 125_000), (200_000, 250_000)):
         d = os.path.join(a.work, "bench-%d" % target)
         if not os.path.exists(d):
             subprocess.run([sys.executable, fixture, d, "--rows", str(ask), "--extended-only"], check=True)
         db = os.path.join(a.work, "bench-%d.sqlite" % target)
-        for suffix in ("", "-wal", "-shm"):
-            if os.path.exists(db + suffix):
-                os.remove(db + suffix)
-        _, err, _ = run_tonearm(a.app, ["--stats", d, "--db", db] + periods)
+        fresh(db)
+        _, err, _, peak = run_tonearm(a.app, ["--stats", d, "--db", db] + periods, memory=True)
         stored = int(re.search(r"(\d+) stored", err).group(1))
         if stored < target:
             sys.exit("only %d listens stored, wanted %d" % (stored, target))
         imp = timing(err, "import:")[0]
         after_import = timing(err, "stats ")[0]
-        # As after an app launch: a new process, SQLite's cache empty, and the OS file
-        # cache dropped too if purge may run without a password (it can on CI runners).
-        purged = subprocess.run(["sudo", "-n", "/usr/sbin/purge"], capture_output=True).returncode == 0
+        print("%d listens: import %d ms, peak memory %s MB (%s)"
+              % (stored, imp, "%.0f" % (peak / 1e6) if peak else "?", phases(err, "import:")))
+        # As after an app launch: a new process, SQLite's cache empty, the OS file cache
+        # dropped.
+        purged = purge()
         _, err, _ = run_tonearm(a.app, ["--stats", "-", "--db", db] + periods)
         st = timing(err, "stats ")
+        print("  all-time stats in the importing process %d ms; in a new process%s %s ms (first call: %s); "
+              "year 2024 %d ms" % (after_import, " after purge" if purged else " (purge not allowed)",
+                                   ", ".join(map(str, st[:3])), phases(err, "stats "), st[3]))
         # The same new process, after what the app does at launch off the main thread
         # (HistoryStore.warmNow), as when someone opens Liner Notes a while after launch.
-        if purged:
-            subprocess.run(["sudo", "-n", "/usr/sbin/purge"], capture_output=True)
+        purge()
         _, err, _ = run_tonearm(a.app, ["--stats", "-", "--db", db, "--warm"] + periods)
         warm_ms = timing(err, "warm:")[0]
         warmed = timing(err, "stats ")[0]
-        results[target] = (imp, st, stored, warm_ms, warmed)
-        print("%d listens: import %d ms; all-time stats in the importing process %d ms; in a new process%s %s ms; "
-              "year 2024 %d ms; first call after the launch warm-up %d ms (warm-up %d ms)"
-              % (stored, imp, after_import, " after purge" if purged else " (purge not allowed)",
-                 ", ".join(map(str, st[:3])), st[3], warmed, warm_ms))
-    import_ms, _, n_import, _, _ = results[100_000]
-    _, st, n_stats, warm_ms, warmed = results[200_000]
+        print("  launch warm-up %d ms (%s), then first call %d ms" % (warm_ms, phases(err, "warm:"), warmed))
+        results[target] = (imp, st, stored, warm_ms, warmed, peak)
+
+    # The same 200k import without the rewrite at the end, to show what it saves.
+    d = os.path.join(a.work, "bench-200000")
+    db = os.path.join(a.work, "bench-200000-uncompacted.sqlite")
+    fresh(db)
+    run_tonearm(a.app, ["--stats", d, "--db", db, "--no-compact", "--period", "year:2024"])
+    purge()
+    _, err, _ = run_tonearm(a.app, ["--stats", "-", "--db", db] + periods)
+    st_nc = timing(err, "stats ")
+    print("200k without compacting: first call after purge %d ms (%s), then %s ms"
+          % (st_nc[0], phases(err, "stats "), ", ".join(map(str, st_nc[1:3]))))
+    fresh(db)
+
+    import_ms, _, n_import, _, _, peak = results[100_000]
+    _, st, n_stats, warm_ms, warmed, _ = results[200_000]
 
     # The import users run: the 100k folder as a zip, unpacked first. Measured, not gated.
     zip_path = os.path.join(a.work, "bench-100000.zip")
@@ -523,11 +573,12 @@ def cmd_bench(a):
     zip_ms = timing(err, "import:")[0]
     print("zip of the 100k fixture: import %d ms, unzip included" % zip_ms)
 
-    ok = import_ms < 10000 and min(st[:3]) < 300
-    line = ("Liner Notes speed: import of %d listens %d ms (limit 10000 for 100k; %d ms from a zip, no limit), "
-            "all-time stats on %d listens %d ms warm (limit 300), %d ms first call in a new process (no limit), "
-            "%d ms first call after the launch warm-up (warm-up %d ms, no limit)"
-            % (n_import, import_ms, zip_ms, n_stats, min(st[:3]), st[0], warmed, warm_ms))
+    ok = import_ms < IMPORT_LIMIT_MS and st[0] < FIRST_CALL_LIMIT_MS
+    line = ("Liner Notes speed: import of %d listens %d ms (limit %d; %d ms from a zip, no limit; peak memory %s MB), "
+            "all-time stats on %d listens: first call in a new process after purge %d ms (limit %d; %d ms "
+            "without compacting), then %d ms; first call after the launch warm-up %d ms (warm-up %d ms, no limit)"
+            % (n_import, import_ms, IMPORT_LIMIT_MS, zip_ms, "%.0f" % (peak / 1e6) if peak else "?", n_stats, st[0],
+               FIRST_CALL_LIMIT_MS, st_nc[0], min(st[1:3]), warmed, warm_ms))
     print(line)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:

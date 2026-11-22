@@ -51,6 +51,9 @@ final class SQLiteDB {
 
     var errorMessage: String { String(cString: sqlite3_errmsg(handle)) }
 
+    /// Rows inserted, changed or deleted on this connection since it opened.
+    var totalChanges: Int { Int(sqlite3_total_changes(handle)) }
+
     func exec(_ sql: String) throws {
         var error: UnsafeMutablePointer<CChar>?
         guard sqlite3_exec(handle, sql, nil, nil, &error) == SQLITE_OK else {

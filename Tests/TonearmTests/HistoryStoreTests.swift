@@ -413,6 +413,26 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertNil(walAfter.range(of: title))
     }
 
+    /// An import that changed something rewrites the file in order and empties the WAL, so
+    /// the first read after a launch is sequential. One that changed nothing leaves it.
+    func testImportCompactsOnlyWhenSomethingChanged() throws {
+        try write("Streaming_History_Audio_2024_0.json", extended)
+        let s = store()
+        var phases: [String] = []
+        s.phaseLog = { phases.append($0) }
+        _ = try s.sync { try $0.importNow(urls: [dir.appendingPathComponent("export")]) }
+        XCTAssertEqual(phases.filter { $0.hasPrefix("import compact") }.count, 1, "\(phases)")
+        let wal = URL(fileURLWithPath: s.url.path + "-wal")
+        XCTAssertEqual(try Data(contentsOf: wal).count, 0)
+        XCTAssertEqual(try s.sync { try SQLiteDB(path: $0.url.path).int("PRAGMA freelist_count") }, 0)
+
+        phases = []
+        let again = try s.sync { try $0.importNow(urls: [dir.appendingPathComponent("export")]) }
+        XCTAssertEqual(again.added, 0)
+        XCTAssertFalse(phases.contains { $0.hasPrefix("import compact") }, "\(phases)")
+        XCTAssertEqual(try s.sync { try $0.countNow() }, 2)
+    }
+
     func testTimestamps() {
         XCTAssertEqual(Timestamp.parse("1970-01-01T00:00:00Z"), 0)
         XCTAssertEqual(Timestamp.parse("2024-03-01T10:03:20Z"), 1_709_287_400_000)
