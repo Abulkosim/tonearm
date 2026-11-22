@@ -29,10 +29,12 @@ out="${2:-build/e2e/report}"
 [ "${CI:-}" = true ] || { echo "idle-cost: CI only; it kills Tonearm and changes its settings" >&2; exit 1; }
 
 window="${IDLE_SECONDS:-60}"
-# Measured on macos-15 runners, then given room for runner noise. See the pull request
-# that added this script for the runs.
-read -r -a cpu_budget <<< "${IDLE_CPU_MS:-1000 1000 1000}"
-read -r -a wakeup_budget <<< "${IDLE_WAKEUPS:-100000 100000 100000}"
+# Two runs on macos-15 runners measured CPU 15 and 14, 2 and 5, 59 and 35 ms; wakeups 6 and
+# 5, 4 and 5, 12 and 14; reads 0, 0 and 1. Polling 10x faster measured 339 ms, 104 wakeups
+# and 20 reads while playing. The budgets sit between, with room for runner noise. Reads
+# are exact: none while paused, one per 30 s while playing, so 60 s sees at most 3.
+read -r -a cpu_budget <<< "${IDLE_CPU_MS:-100 100 200}"
+read -r -a wakeup_budget <<< "${IDLE_WAKEUPS:-60 60 60}"
 read -r -a read_budget <<< "${IDLE_READS:-0 0 3}"
 
 E2E_DIR="${E2E_DIR:-build/e2e}"
