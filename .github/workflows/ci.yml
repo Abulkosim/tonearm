@@ -150,6 +150,9 @@ jobs:
           persist-credentials: false
       - name: ShellCheck
         run: shellcheck --version && shellcheck scripts/*.sh
+      # The release refuses a commit whose required checks did not pass; test that rule.
+      - name: Release CI gate
+        run: scripts/require-ci-test.sh
       - name: Release notes for the current version
         run: |
           version="$(grep -A1 '<key>CFBundleShortVersionString</key>' Resources/Info.plist \
