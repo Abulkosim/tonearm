@@ -103,8 +103,11 @@ struct SettingsView: View {
             divider
 
             sectionTitle("In the player")
-            HStack(alignment: .top, spacing: 16) {
+            // The left list gets its full width first: with the two split evenly, "Previous,
+            // next" was cut to "Previous, ne…". The right one's words are short.
+            HStack(alignment: .top, spacing: 8) {
                 ShortcutList(items: Array(KeyCommand.help.prefix(4)), keyWidth: Self.keyColumn)
+                    .layoutPriority(1)
                 ShortcutList(items: Array(KeyCommand.help.dropFirst(4)), keyWidth: 28)
             }
             .padding(.bottom, 4)
