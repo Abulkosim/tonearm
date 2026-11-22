@@ -307,7 +307,7 @@ final class LinerNotesModelTests: XCTestCase {
         var zone = utc
         let center = NotificationCenter()
         let m = LinerNotesModel(store: store, systemTimeZone: { zone }, notifications: center)
-        XCTAssertEqual(m.timeZone.identifier, "UTC")
+        XCTAssertEqual(m.timeZone, utc)
         m.start()
         try await until { m.phase == .ready }
         XCTAssertEqual(m.years, [2023])

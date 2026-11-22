@@ -55,6 +55,9 @@ final class HistoryStoreTests: XCTestCase {
     func testImportsExtendedHistoryOnceAndKeepsNoPrivateFields() throws {
         try write("Spotify Extended Streaming History/Streaming_History_Audio_2024_0.json", extended)
         let s = store()
+        // Without the rewrite after the import, the WAL keeps what the import wrote, for the
+        // check at the end.
+        s.compactsAfterImport = false
         let first = try s.sync { try $0.importNow(urls: [dir.appendingPathComponent("export")]) }
         XCTAssertEqual(first.files, 1)
         XCTAssertEqual(first.rows, 4)
