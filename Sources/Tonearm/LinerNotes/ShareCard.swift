@@ -169,6 +169,9 @@ struct ShareSheet: View {
             .frame(width: ShareCard.size.width * Self.previewScale, height: ShareCard.size.height * Self.previewScale)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(p.hairline))
+            .accessibilityElement()
+            .accessibilityAddTraits(.isImage)
+            .accessibilityLabel(Self.cardDescription(model))
 
             Text(problem ?? saved ?? "1080 × 1350, the size of a portrait post")
                 .font(.system(size: 12))
@@ -183,6 +186,8 @@ struct ShareSheet: View {
                 Spacer(minLength: 8)
                 Button("Save…", action: save)
                     .buttonStyle(LinerButtonStyle())
+                    .keyboardShortcut("s", modifiers: .command)
+                    .help("Save the card as a picture (⌘S)")
                     .disabled(image == nil)
                 shareButton(p)
             }
@@ -191,6 +196,17 @@ struct ShareSheet: View {
         .frame(width: ShareCard.size.width * Self.previewScale + 48)
         .background(p.page)
         .onAppear(perform: prepare)
+    }
+
+    /// What the card says, for VoiceOver: "Liner Notes card for 2024: 12,345 minutes, top
+    /// artist Кино, top song Звезда".
+    @MainActor static func cardDescription(_ model: LinerNotesModel) -> String {
+        let title = LinerFormat.title(model.period, timeZone: model.timeZone)
+        guard let s = model.stats else { return "Liner Notes card for \(title)" }
+        var parts = ["\(LinerFormat.number(LinerFormat.minutes(s.music.ms))) minutes"]
+        if let a = s.music.topArtists.first { parts.append("top artist \(a.name)") }
+        if let t = s.music.topTracks.first { parts.append("top song \(t.name)") }
+        return "Liner Notes card for \(title): " + parts.joined(separator: ", ")
     }
 
     @ViewBuilder private func shareButton(_ p: LinerPalette) -> some View {

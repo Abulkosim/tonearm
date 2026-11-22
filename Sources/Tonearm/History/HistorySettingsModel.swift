@@ -155,6 +155,8 @@ final class HistorySettingsModel: ObservableObject {
         do {
             try await store.deleteAll()
             listenBrainz.deleteQueued()
+            // A share card waiting for the share menu is a picture of the same listening.
+            ShareSheet.removeTemporaryFiles()
             note = Note(action: .deleted, text: "Deleted \(what).")
         } catch {
             note = Note(action: .deleted, text: "Could not delete: \(error)", isError: true)
