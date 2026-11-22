@@ -1,5 +1,7 @@
+import Accessibility
 import AppKit
 import CoreText
+import SwiftUI
 import XCTest
 @testable import Tonearm
 
@@ -322,6 +324,35 @@ final class LinerNotesModelTests: XCTestCase {
     private func until(_ done: () -> Bool) async throws {
         for _ in 0..<500 where !done() { try await Task.sleep(nanoseconds: 10_000_000) }
         XCTAssertTrue(done(), "timed out")
+    }
+
+    /// VoiceOver gets each chart as data it can play as an audio graph or read as a table:
+    /// every day of the week with its minutes, and every hour of every weekday.
+    func testChartsGiveVoiceOverEveryValue() {
+        var s = Stats(period: "week:2025-11-17")
+        s.music.daily = (0..<7).map { Stats.DayTotal(day: LocalDay(year: 2025, month: 11, day: 17 + $0),
+                                                     ms: Int64($0) * 60_000) }
+        s.music.ms = 21 * 60_000
+        let chart = ListeningChart(stats: s, timeZone: utc, palette: LinerPalette(.dark),
+                                   today: LocalDay(year: 2025, month: 11, day: 23))
+        let d = chart.makeChartDescriptor()
+        XCTAssertEqual(d.title, "Minutes per day")
+        XCTAssertEqual(d.summary, chart.accessibilitySummary(chart.bars))
+        XCTAssertEqual(d.series.count, 1)
+        XCTAssertEqual(d.series.first?.dataPoints.count, 7)
+        XCTAssertTrue(d.series.first?.dataPoints.last?.label?.hasSuffix(", 6 min") == true,
+                      d.series.first?.dataPoints.last?.label ?? "no label")
+
+        var heat = Array(repeating: Array(repeating: Int64(0), count: 24), count: 7)
+        heat[5][21] = 30 * 60_000
+        let clock = ListeningClock(heatmap: heat, palette: LinerPalette(.dark))
+        let c = clock.makeChartDescriptor()
+        XCTAssertEqual(c.summary, clock.caption)
+        XCTAssertEqual(c.series.count, 7)
+        XCTAssertEqual(c.series.map(\.dataPoints.count), Array(repeating: 24, count: 7))
+        XCTAssertEqual(c.series[5].name, LinerFormat.weekdayNames[5])
+        XCTAssertEqual(c.series[5].dataPoints[21].label,
+                       "\(LinerFormat.weekdayNames[5]) \(LinerFormat.hour(21)), 30 min")
     }
 
     /// A period with no plays says what it had instead of "Nothing played".

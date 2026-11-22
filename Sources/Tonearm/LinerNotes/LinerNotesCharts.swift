@@ -1,3 +1,4 @@
+import Accessibility
 import Charts
 import SwiftUI
 
@@ -130,6 +131,7 @@ struct ListeningChart: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
         .accessibilityValue(accessibilitySummary(data))
+        .accessibilityChartDescriptor(self)
     }
 
     private func dateText(_ date: Date, _ template: String) -> String {
@@ -176,10 +178,30 @@ struct ListeningChart: View {
         data.min { abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date)) }?.date
     }
 
-    private func accessibilitySummary(_ data: [Bar]) -> String {
+    func accessibilitySummary(_ data: [Bar]) -> String {
         guard let peak = data.max(by: { $0.ms < $1.ms }) else { return "No listening" }
         let day = dateText(peak.date, unit == .day ? "MMMMd" : "MMMMy")
         return "\(average). Most on \(day), \(LinerFormat.minutesText(peak.ms))."
+    }
+}
+
+/// VoiceOver's audio graph and data table of the bars: every day (or month) and its minutes.
+extension ListeningChart: AXChartDescriptorRepresentable {
+    func makeChartDescriptor() -> AXChartDescriptor {
+        let data = bars
+        let names = data.map { dateText($0.date, unit == .day ? "EEEMMMdy" : "MMMMy") }
+        let most = Double(data.map(\.ms).max() ?? 0) / 60_000
+        let x = AXCategoricalDataAxisDescriptor(title: unit == .day ? "Day" : "Month", categoryOrder: names)
+        let y = AXNumericDataAxisDescriptor(title: "Minutes", range: 0...max(1, most), gridlinePositions: []) {
+            "\(LinerFormat.number(Int($0.rounded()))) min"
+        }
+        let points = zip(names, data).map { name, bar in
+            AXDataPoint(x: name, y: Double(bar.ms) / 60_000, additionalValues: [],
+                        label: "\(name), \(LinerFormat.minutesText(bar.ms))")
+        }
+        let series = AXDataSeriesDescriptor(name: "Minutes", isContinuous: false, dataPoints: points)
+        return AXChartDescriptor(title: title, summary: accessibilitySummary(data), xAxis: x, yAxis: y,
+                                 additionalAxes: [], series: [series])
     }
 }
 
@@ -258,6 +280,32 @@ struct ListeningClock: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Listening by weekday and hour")
         .accessibilityValue(caption)
+        .accessibilityChartDescriptor(self)
+    }
+}
+
+/// VoiceOver's audio graph and data table of the clock: one series a weekday, minutes by hour.
+extension ListeningClock: AXChartDescriptorRepresentable {
+    func makeChartDescriptor() -> AXChartDescriptor {
+        let hours = (0..<24).map(LinerFormat.hour)
+        let days = LinerFormat.weekdayNames
+        var most: Int64 = 0
+        let series = (0..<7).map { d in
+            let day = d < days.count ? days[d] : "\(d + 1)"
+            return AXDataSeriesDescriptor(name: day, isContinuous: false, dataPoints: (0..<24).map { h in
+                let ms = d < heatmap.count && h < heatmap[d].count ? heatmap[d][h] : 0
+                most = max(most, ms)
+                return AXDataPoint(x: hours[h], y: Double(ms) / 60_000, additionalValues: [],
+                                   label: "\(day) \(hours[h]), \(LinerFormat.minutesText(ms))")
+            })
+        }
+        let x = AXCategoricalDataAxisDescriptor(title: "Hour", categoryOrder: hours)
+        let y = AXNumericDataAxisDescriptor(title: "Minutes", range: 0...max(1, Double(most) / 60_000),
+                                            gridlinePositions: []) {
+            "\(LinerFormat.number(Int($0.rounded()))) min"
+        }
+        return AXChartDescriptor(title: "Listening by weekday and hour", summary: caption, xAxis: x, yAxis: y,
+                                 additionalAxes: [], series: series)
     }
 }
 
