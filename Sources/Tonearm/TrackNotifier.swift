@@ -2,7 +2,8 @@ import AppKit
 import UserNotifications
 
 /// Posts a notification when the song changes, with the cover if it arrives in time.
-/// Skips the first song seen after launch, ads, and changes while the popover is open.
+/// Skips the first song seen after launch, ads, changes while the popover is open, and
+/// songs skipped before they settled: skipping through five songs posts one notification.
 @MainActor
 final class TrackNotifier {
     /// UNUserNotificationCenter throws an Objective-C exception outside an .app bundle,
@@ -13,18 +14,37 @@ final class TrackNotifier {
 
     /// How long to wait for the cover before posting without it.
     static let artworkWait: TimeInterval = 2.5
+    /// How long a song must play before it gets a notification. A cover already loaded
+    /// arrives at once, so without this every skip posted one.
+    static let settleTime: TimeInterval = 1
     static let requestID = "tonearm.track"
 
     private let isEnabled: @MainActor () -> Bool
     private let isPopoverVisible: @MainActor () -> Bool
+    private let settle: TimeInterval
+    private let artworkWait: TimeInterval
+    private let post: @MainActor (Track, NSImage?) -> Void
     /// Id of the last song seen, nil before the first.
     private var lastSeenID: String?
     private var pending: Track?
-    private var pendingTimeout: DispatchWorkItem?
+    private var pendingImage: NSImage?
+    /// The cover for `pending` loaded, or is known to be missing.
+    private var artworkKnown = false
+    /// `pending` has been the song for `settle` seconds.
+    private var settled = false
+    private var timers: [DispatchWorkItem] = []
 
-    init(isEnabled: @escaping @MainActor () -> Bool, isPopoverVisible: @escaping @MainActor () -> Bool) {
+    /// `settle` and `artworkWait` default to `settleTime` and `artworkWait`. `post` shows the
+    /// notification; tests pass their own.
+    init(isEnabled: @escaping @MainActor () -> Bool, isPopoverVisible: @escaping @MainActor () -> Bool,
+         settle: TimeInterval? = nil, artworkWait: TimeInterval? = nil,
+         post: (@MainActor (Track, NSImage?) -> Void)? = nil) {
         self.isEnabled = isEnabled
         self.isPopoverVisible = isPopoverVisible
+        let settle = settle ?? Self.settleTime
+        self.settle = settle
+        self.artworkWait = max(artworkWait ?? Self.artworkWait, settle)
+        self.post = post ?? { Self.show($0, image: $1) }
     }
 
     /// Pure decision, for tests.
@@ -57,17 +77,30 @@ final class TrackNotifier {
                                 popoverVisible: isPopoverVisible())
         else { return }
         pending = track
-        let timeout = DispatchWorkItem { [weak self] in
-            Task { @MainActor in self?.postPending(image: nil) }
+        after(settle) { notifier in
+            notifier.settled = true
+            if notifier.artworkKnown { notifier.postPending() }
         }
-        pendingTimeout = timeout
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.artworkWait, execute: timeout)
+        after(artworkWait) { $0.postPending() }
     }
 
     /// Call when the cover for `trackID` has loaded, or is known to be missing.
     func artworkReady(_ image: NSImage?, trackID: String) {
-        guard let pending, pending.id == trackID else { return }
-        postPending(image: image)
+        guard let pending, pending.id == trackID, !artworkKnown else { return }
+        pendingImage = image
+        artworkKnown = true
+        if settled { postPending() }
+    }
+
+    private func after(_ seconds: TimeInterval, _ body: @escaping @MainActor (TrackNotifier) -> Void) {
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                body(self)
+            }
+        }
+        timers.append(work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
     }
 
     /// Asks for permission to post. macOS shows its prompt only while the user has not
@@ -125,39 +158,49 @@ final class TrackNotifier {
     }
 
     private func cancelPending() {
-        pendingTimeout?.cancel()
-        pendingTimeout = nil
+        timers.forEach { $0.cancel() }
+        timers = []
         pending = nil
+        pendingImage = nil
+        artworkKnown = false
+        settled = false
     }
 
-    private func postPending(image: NSImage?) {
+    private func postPending() {
         guard let track = pending else { return }
+        let image = pendingImage
         cancelPending()
         // The popover may have opened while waiting for the cover.
-        guard isEnabled(), !isPopoverVisible(), Self.isAvailable else { return }
+        guard isEnabled(), !isPopoverVisible() else { return }
+        post(track, image)
+    }
 
-        let content = UNMutableNotificationContent()
-        content.title = track.title
-        content.body = Self.body(for: track)
-        var file: URL?
-        if let image, let url = Self.writeTemporaryJPEG(image) {
-            file = url
-            if let attachment = try? UNNotificationAttachment(identifier: "cover", url: url, options: nil) {
+    /// Posts to Notification Center. Only inside Tonearm.app. The cover is encoded and
+    /// written off the main thread.
+    private static func show(_ track: Track, image: NSImage?) {
+        guard isAvailable else { return }
+        let title = track.title, body = Self.body(for: track), id = requestID
+        let cover = image?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        DispatchQueue.global(qos: .utility).async {
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            let file = cover.flatMap(writeTemporaryJPEG)
+            if let file, let attachment = try? UNNotificationAttachment(identifier: "cover", url: file, options: nil) {
                 content.attachments = [attachment]
             }
-        }
-        // One identifier, so each song replaces the last one in Notification Center.
-        let request = UNNotificationRequest(identifier: Self.requestID, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error { NSLog("Tonearm: notification failed: %@", error.localizedDescription) }
-            // macOS moves the file into its own store on success; clean up if it did not.
-            if let file { try? FileManager.default.removeItem(at: file) }
+            // One identifier, so each song replaces the last one in Notification Center.
+            let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
+            UNUserNotificationCenter.current().add(request) { error in
+                if let error { NSLog("Tonearm: notification failed: %@", error.localizedDescription) }
+                // macOS moves the file into its own store on success; clean up if it did not.
+                if let file { try? FileManager.default.removeItem(at: file) }
+            }
         }
     }
 
-    private static func writeTemporaryJPEG(_ image: NSImage) -> URL? {
-        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
-              let data = NSBitmapImageRep(cgImage: cg).representation(using: .jpeg,
+    private nonisolated static func writeTemporaryJPEG(_ cg: CGImage) -> URL? {
+        guard let data = NSBitmapImageRep(cgImage: cg).representation(using: .jpeg,
                                                                       properties: [.compressionFactor: 0.85])
         else { return nil }
         let url = FileManager.default.temporaryDirectory
