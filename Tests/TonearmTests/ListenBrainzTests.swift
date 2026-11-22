@@ -635,6 +635,20 @@ final class ListenBrainzSyncTests: XCTestCase {
         XCTAssertEqual(try readSaved().pending.count, 1)
     }
 
+    /// A queue file that could not be read is set aside, not lost; it holds song names, so
+    /// delete all and Remove token delete it as well.
+    func testAnUnreadableQueueIsSetAsideAndDeletedWithTheRest() throws {
+        let copy = ListenBrainzSync.unreadableCopy(of: file)
+        for removeToken in [true, false] {
+            try Data("{\"pending\": [{\"track\": \"Song".utf8).write(to: file)
+            let s = sync()
+            XCTAssertTrue(FileManager.default.fileExists(atPath: copy.path))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+            if removeToken { s.disconnect() } else { s.deleteQueued() }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: copy.path), removeToken ? "remove token" : "delete all")
+        }
+    }
+
     func testDeleteAllHistoryMakesNoFileForSomeoneWhoNeverConnected() {
         let s = sync(token: nil)
         s.deleteQueued()

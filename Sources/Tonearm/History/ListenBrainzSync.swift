@@ -260,7 +260,10 @@ final class ListenBrainzSync: ObservableObject {
         problem = nil
         retryAt = nil
         connection = .noToken
-        if let file { try? FileManager.default.removeItem(at: file) }
+        if let file {
+            try? FileManager.default.removeItem(at: file)
+            try? FileManager.default.removeItem(at: Self.unreadableCopy(of: file))
+        }
     }
 
     /// "Delete all history" also deletes the queue: it holds song names. The token stays,
@@ -278,6 +281,8 @@ final class ListenBrainzSync: ObservableObject {
         longest = nil
         // Empty the file if there is one; never make one for someone who never connected.
         if let file, FileManager.default.fileExists(atPath: file.path) { persist() }
+        // A queue that could not be read was set aside; it holds song names too.
+        if let file { try? FileManager.default.removeItem(at: Self.unreadableCopy(of: file)) }
         kick()
     }
 
@@ -603,12 +608,18 @@ final class ListenBrainzSync: ObservableObject {
         do {
             return try JSONDecoder().decode(Saved.self, from: data)
         } catch {
-            // Keep the unreadable file for a person to look at, and start afresh.
+            // Keep the unreadable file for a person to look at, and start afresh. Delete
+            // all and Remove token delete it too.
             NSLog("Tonearm: could not read %@: %@", url.path, "\(error)")
-            try? FileManager.default.moveItem(at: url, to: url.appendingPathExtension("unreadable"))
+            let copy = unreadableCopy(of: url)
+            try? FileManager.default.removeItem(at: copy)
+            try? FileManager.default.moveItem(at: url, to: copy)
             return nil
         }
     }
+
+    /// Where a queue file that could not be read is kept: listenbrainz.json.unreadable.
+    static func unreadableCopy(of file: URL) -> URL { file.appendingPathExtension("unreadable") }
 
     private func persist() {
         guard let file else { return }
