@@ -21,9 +21,8 @@ final class TrackNotifier {
 
     private let isEnabled: @MainActor () -> Bool
     private let isPopoverVisible: @MainActor () -> Bool
-    private let settle: TimeInterval
-    private let artworkWait: TimeInterval
     private let post: @MainActor (Track, NSImage?) -> Void
+    private let schedule: @MainActor (TimeInterval, DispatchWorkItem) -> Void
     /// Id of the last song seen, nil before the first.
     private var lastSeenID: String?
     private var pending: Track?
@@ -34,17 +33,15 @@ final class TrackNotifier {
     private var settled = false
     private var timers: [DispatchWorkItem] = []
 
-    /// `settle` and `artworkWait` default to `settleTime` and `artworkWait`. `post` shows the
-    /// notification; tests pass their own.
+    /// `post` shows the notification and `schedule` runs work after a delay on the main
+    /// queue; tests pass their own, so they run on a clock they move by hand.
     init(isEnabled: @escaping @MainActor () -> Bool, isPopoverVisible: @escaping @MainActor () -> Bool,
-         settle: TimeInterval? = nil, artworkWait: TimeInterval? = nil,
-         post: (@MainActor (Track, NSImage?) -> Void)? = nil) {
+         post: (@MainActor (Track, NSImage?) -> Void)? = nil,
+         schedule: (@MainActor (TimeInterval, DispatchWorkItem) -> Void)? = nil) {
         self.isEnabled = isEnabled
         self.isPopoverVisible = isPopoverVisible
-        let settle = settle ?? Self.settleTime
-        self.settle = settle
-        self.artworkWait = max(artworkWait ?? Self.artworkWait, settle)
         self.post = post ?? { Self.show($0, image: $1) }
+        self.schedule = schedule ?? { DispatchQueue.main.asyncAfter(deadline: .now() + $0, execute: $1) }
     }
 
     /// Pure decision, for tests.
@@ -77,11 +74,11 @@ final class TrackNotifier {
                                 popoverVisible: isPopoverVisible())
         else { return }
         pending = track
-        after(settle) { notifier in
+        after(Self.settleTime) { notifier in
             notifier.settled = true
             if notifier.artworkKnown { notifier.postPending() }
         }
-        after(artworkWait) { $0.postPending() }
+        after(Self.artworkWait) { $0.postPending() }
     }
 
     /// Call when the cover for `trackID` has loaded, or is known to be missing.
@@ -100,7 +97,7 @@ final class TrackNotifier {
             }
         }
         timers.append(work)
-        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
+        schedule(seconds, work)
     }
 
     /// Asks for permission to post. macOS shows its prompt only while the user has not
