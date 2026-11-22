@@ -334,10 +334,13 @@ final class HistoryStore: @unchecked Sendable {
             var live = try LiveMatcher(d)
 
             for (i, file) in found.files.enumerated() {
-                let parsed: ExportParser.Parsed
-                do {
-                    parsed = try ExportParser.parse(Data(contentsOf: file))
-                } catch {
+                // One file's rows at a time. Foundation's JSON objects are autoreleased, and
+                // this loop runs on a dispatch queue whose pool drains only when the import
+                // is over, so without a pool per file every file would stay in memory.
+                let parsed: ExportParser.Parsed? = autoreleasepool {
+                    try? ExportParser.parse(Data(contentsOf: file))
+                }
+                guard let parsed else {
                     result.unreadable.append(file.lastPathComponent)
                     continue
                 }
