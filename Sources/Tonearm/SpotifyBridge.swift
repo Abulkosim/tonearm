@@ -216,7 +216,7 @@ class SpotifyBridge {
 
     /// Called with true just before macOS may show its Automation prompt, and with false
     /// once the user answered. Runs on the main actor. Set it once, before the first fetch.
-    var permissionPromptChanged: (@MainActor (Bool) -> Void)?
+    var permissionPromptChanged: (@MainActor @Sendable (Bool) -> Void)?
 
     /// Safe on any thread. Checked again right before every script.
     var isRunning: Bool {
@@ -360,7 +360,8 @@ class SpotifyBridge {
             var p = Self.determinePermission(ask: false)
             if ask, p == .needsConsent { p = self.askForPermission() }
             self.authorized = p == .granted
-            DispatchQueue.main.async { done(p) }
+            let answer = p
+            DispatchQueue.main.async { done(answer) }
         }
     }
 

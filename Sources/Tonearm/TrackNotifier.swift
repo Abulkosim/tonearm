@@ -140,7 +140,7 @@ final class TrackNotifier {
 
     /// Makes banners show while Tonearm is the active app (macOS hides them otherwise) and
     /// runs `onClick` when the user clicks one. Call once, at startup.
-    static func installDelegate(onClick: @escaping @MainActor () -> Void) {
+    static func installDelegate(onClick: @escaping @MainActor @Sendable () -> Void) {
         guard isAvailable, delegate == nil else { return }
         let d = NotificationDelegate(onClick: onClick)
         delegate = d
@@ -215,9 +215,9 @@ final class TrackNotifier {
 }
 
 private final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
-    private let onClick: @MainActor () -> Void
+    private let onClick: @MainActor @Sendable () -> Void
 
-    init(onClick: @escaping @MainActor () -> Void) {
+    init(onClick: @escaping @MainActor @Sendable () -> Void) {
         self.onClick = onClick
     }
 
