@@ -29,13 +29,14 @@ jobs:
       - name: Toolchain
         run: swift --version && sw_vers
       - name: Test
-        run: swift test
-      - name: Build app
         run: |
           mkdir -p build
-          scripts/build-app.sh 2>&1 | tee build/build.log
+          swift test 2>&1 | tee build/test.log
+      - name: Build app
+        run: scripts/build-app.sh 2>&1 | tee build/build.log
+      # Compiler warnings in the app and the tests, and linker warnings, fail the job.
       - name: Report warnings
-        run: scripts/swift-warnings.sh build/build.log
+        run: scripts/swift-warnings.sh build/test.log build/build.log
       - name: Check app bundle and launch it
         run: EXPECT_SIGNING=adhoc scripts/check-app.sh build/Tonearm.app
       # Starts the real app, which starts Sparkle, and for 10 s checks that it is running and
