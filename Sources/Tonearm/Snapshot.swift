@@ -360,8 +360,9 @@ extension Snapshot {
     static let demoCovers: [SampleCover] = [.teal, .warm]
 
     /// The animation's canvas, in points: the desktop under the menu bar, with the Liner Notes
-    /// window open at its smallest width and the player open over it.
-    static let demoCanvas = CGSize(width: 900, height: 724)
+    /// window open at its smallest width and the player open over it. The window starts 80 pt
+    /// in, so the player hides its cover tile and buttons but cuts no text in half.
+    static let demoCanvas = CGSize(width: 940, height: 724)
     static let demoWindow = CGSize(width: LinerNotesWindow.minSize.width, height: 600)
     /// The website's social preview, 1200 x 630 pixels.
     static let socialCanvas = CGSize(width: 1200, height: 630)
@@ -386,7 +387,7 @@ extension Snapshot {
             let start: Double = song == 0 ? 83 : 4
             let player = model(.playing, cover: demoCovers[song], song: demoSongs[song], position: start + seconds)
             let view = desktopScene(notes, player: player, open: open, canvas: demoCanvas,
-                                    window: demoWindow, windowLeading: 40)
+                                    window: demoWindow, windowLeading: 80)
             guard let cg = image(view) else { fail("render failed for a demo frame") }
             return cg
         }
