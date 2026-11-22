@@ -9,7 +9,9 @@ name: Release
 #   SELF_SIGN_CERT_P12 ...  "Tonearm Self-Signed" certificate
 #   nothing                 ad-hoc
 # SPARKLE_ED_PRIVATE_KEY signs the update for the appcast. Without it a tag push fails.
-# Before publishing, update-e2e.yml checks that an old build installs this one through Sparkle.
+# Before building, scripts/require-ci.sh waits for every required check to pass on the tagged
+# commit: this workflow runs no tests of its own. Before publishing, update-e2e.yml checks
+# that an old build installs this one through Sparkle.
 on:
   push:
     tags: ["v*"]
@@ -27,6 +29,10 @@ on:
       - scripts/appcast.sh
       - scripts/verify-appcast.sh
       - scripts/ed25519-public-key.sh
+      - scripts/require-ci.sh
+      - scripts/live-launch.sh
+      - scripts/allow-apple-events.sh
+      - Tools/LaunchPing/**
       - Package.swift
       - Package.resolved
       - Resources/Info.plist
@@ -56,9 +62,11 @@ jobs:
   prepare:
     name: Resolve version
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # Waits up to 60 min for CI on the commit to finish.
+    timeout-minutes: 70
     permissions:
       contents: read
+      checks: read
     outputs:
       version: ${{ steps.version.outputs.version }}
       build: ${{ steps.version.outputs.build }}
@@ -112,6 +120,16 @@ jobs:
             echo "publish=$publish"
           } >> "$GITHUB_OUTPUT"
           echo "Version $version (build $build), publish: $publish" >> "$GITHUB_STEP_SUMMARY"
+      # The commit must be on main and pass every required check: tests, state walk, live
+      # launch, E2E. Manual dry runs check it too, so they show what a tag push would do.
+      - name: Require green CI on this commit
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          scripts/require-ci.sh "$SHA"
+          echo "CI: every required check passed on $SHA" >> "$GITHUB_STEP_SUMMARY"
 
   build:
     name: Build and package
@@ -214,6 +232,8 @@ jobs:
           case "$SIGNING" in notarized) expect=developer-id ;; *) expect="$SIGNING" ;; esac
           EXPECT_VERSION="$VERSION" EXPECT_BUILD="$BUILD" EXPECT_SIGNING="$expect" \
             scripts/check-app.sh "$check/Tonearm.app"
+          # The app users download, opened the way they open it: up 10 s, main thread answering.
+          scripts/live-launch.sh "$check/Tonearm.app"
           cmp "dist/Tonearm-$VERSION.zip" dist/Tonearm.zip
           cmp "dist/Tonearm-$VERSION.dmg" dist/Tonearm.dmg
       - name: Sparkle tools
