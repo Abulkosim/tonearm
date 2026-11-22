@@ -79,4 +79,4 @@ If you turn on Send to ListenBrainz in Settings → History and paste your token
 
 ## Does `brew upgrade` update it?
 
-No, and it doesn't need to. The app updates itself, and the cask is marked `auto_updates`, so Homebrew leaves it alone.
+No, and it doesn't need to. The app updates itself. The cask always installs the latest release, and Homebrew skips such casks in `brew upgrade` unless you add `--greedy`.
