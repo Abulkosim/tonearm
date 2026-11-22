@@ -39,10 +39,10 @@ struct ArtworkBackground: View {
         ZStack {
             PlayerTheme.base
             layer
-                .id(key)
+                .id(colors)
                 .transition(.opacity)
         }
-        .animation(PlayerTheme.slowFade, value: key)
+        .animation(PlayerTheme.slowFade, value: colors)
     }
 
     @ViewBuilder private var layer: some View {
@@ -62,12 +62,6 @@ struct ArtworkBackground: View {
         } else {
             PlayerTheme.fallback
         }
-    }
-
-    /// Identity of the current colors. ArtworkColors is not required to be Equatable.
-    private var key: String {
-        guard let colors else { return "none" }
-        return "\(colors.primary)|\(colors.secondary)"
     }
 
     /// Same hue, more saturated and darker, so the tint reads as a color rather than as

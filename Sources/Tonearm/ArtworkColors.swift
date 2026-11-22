@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Background colors derived from the cover: a muted, saturated `primary` and a darker
 /// `secondary` of the same hue. Both are dark enough for white text.
-struct ArtworkColors: Equatable {
+struct ArtworkColors: Hashable {
     var primary: Color
     var secondary: Color
 }
