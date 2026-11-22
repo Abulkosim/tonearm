@@ -221,6 +221,117 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertEqual(other.detail, "History database error: disk I/O error.")
     }
 
+    /// Rows in the shapes of real exports (field order, spacing, nulls and empty strings as in
+    /// downloads people published; every name, time, length, ID and address here is invented).
+    /// Account data is written with a space before each colon, and its endTime is the extended
+    /// ts cut to the minute: 21:07:48 is "21:07", 07:15:12 is "07:15", never rounded up. Old
+    /// endsong files are one line, with ip_addr_decrypted and username, null skipped and null
+    /// or "" reasons. See docs/history.md.
+    func testRealExportShapes() throws {
+        try write("Spotify Account Data/StreamingHistory_music_0.json", """
+        [
+          {
+            "endTime" : "2025-03-14 21:07",
+            "artistName" : "The Paper Lanterns",
+            "trackName" : "Night Ferry",
+            "msPlayed" : 254317
+          },
+          {
+            "endTime" : "2025-03-09 07:15",
+            "artistName" : "Mira Okafor",
+            "trackName" : "Slow Weather",
+            "msPlayed" : 198406
+          }
+        ]
+        """)
+        try write("Spotify Extended Streaming History/Streaming_History_Audio_2025.json", """
+        [
+          {
+            "ts": "2025-03-14T21:07:48Z",
+            "platform": "osx",
+            "ms_played": 254317,
+            "conn_country": "ZZ",
+            "ip_addr": "192.0.2.1",
+            "master_metadata_track_name": "Night Ferry",
+            "master_metadata_album_artist_name": "The Paper Lanterns",
+            "master_metadata_album_album_name": "Harbour Lights",
+            "spotify_track_uri": "spotify:track:0000000000000000000001",
+            "episode_name": null,
+            "episode_show_name": null,
+            "spotify_episode_uri": null,
+            "audiobook_title": null,
+            "audiobook_uri": null,
+            "audiobook_chapter_uri": null,
+            "audiobook_chapter_title": null,
+            "reason_start": "trackdone",
+            "reason_end": "trackdone",
+            "shuffle": true,
+            "skipped": false,
+            "offline": false,
+            "offline_timestamp": 1741986214,
+            "incognito_mode": false
+          },
+          {
+            "ts": "2025-03-09T07:15:12Z",
+            "platform": "osx",
+            "ms_played": 198406,
+            "conn_country": "ZZ",
+            "ip_addr": "192.0.2.1",
+            "master_metadata_track_name": "Slow Weather",
+            "master_metadata_album_artist_name": "Mira Okafor",
+            "master_metadata_album_album_name": "Small Hours",
+            "spotify_track_uri": "spotify:track:0000000000000000000002",
+            "episode_name": null,
+            "episode_show_name": null,
+            "spotify_episode_uri": null,
+            "reason_start": "playbtn",
+            "reason_end": "logout",
+            "shuffle": false,
+            "skipped": false,
+            "offline": false,
+            "offline_timestamp": 1741504314,
+            "incognito_mode": false
+          }
+        ]
+        """)
+        try write("MyData/endsong_0.json", """
+        [{"ts":"2018-06-19T18:22:40Z","username":"fixture-user","platform":"OS X 10.0.0 [fixture]",\
+        "ms_played":71500,"conn_country":"ZZ","ip_addr_decrypted":"192.0.2.2","user_agent_decrypted":"unknown",\
+        "master_metadata_track_name":null,"master_metadata_album_artist_name":null,\
+        "master_metadata_album_album_name":null,"spotify_track_uri":null,"episode_name":null,\
+        "episode_show_name":null,"spotify_episode_uri":null,"reason_start":"clickrow","reason_end":"endplay",\
+        "shuffle":false,"skipped":null,"offline":false,"offline_timestamp":1529432489500,"incognito_mode":false},\
+        {"ts":"2018-06-19T18:27:09Z","username":"fixture-user","platform":"OS X 10.0.0 [fixture]",\
+        "ms_played":236000,"conn_country":"ZZ","ip_addr_decrypted":"192.0.2.2",\
+        "master_metadata_track_name":"Tin Roof Rain","master_metadata_album_artist_name":"Halden Street",\
+        "master_metadata_album_album_name":"Second Floor","spotify_track_uri":"spotify:track:0000000000000000000003",\
+        "episode_name":null,"episode_show_name":null,"spotify_episode_uri":null,"reason_start":"","reason_end":"",\
+        "shuffle":false,"skipped":null,"offline":false,"offline_timestamp":1529432593000,"incognito_mode":false}]
+        """)
+        let s = store()
+        let r = try s.sync { try $0.importNow(urls: [dir.appendingPathComponent("export")]) }
+        XCTAssertEqual(r.files, 3)
+        XCTAssertEqual(r.rows, 6)
+        XCTAssertEqual(r.skipped, 1, "the endsong row with no names")
+        XCTAssertEqual(r.added, 3)
+        XCTAssertEqual(r.duplicates, 2, "both account rows are the extended plays")
+
+        let rows = try s.sync { try $0.musicPageNow(after: nil, before: .max, limit: 10) }
+        XCTAssertEqual(rows.map(\.title), ["Tin Roof Rain", "Slow Weather", "Night Ferry"])
+        XCTAssertEqual(rows.map(\.album), ["Second Floor", "Small Hours", "Harbour Lights"],
+                       "the extended copy, with the album, is the one kept")
+        XCTAssertEqual(rows[0].reasonEnd, nil, "an empty reason is no reason")
+        XCTAssertEqual(rows[0].skipped, nil)
+        XCTAssertEqual(rows[1].reasonEnd, "logout")
+        XCTAssertEqual(rows[2].reasonEnd, "trackdone")
+        XCTAssertEqual(rows[2].startedAt, ms("2025-03-14T21:07:48Z") - 254_317)
+
+        let blob = try Data(contentsOf: s.url)
+        for secret in ["192.0.2.", "fixture-user", "[fixture]"] {
+            XCTAssertNil(blob.range(of: Data(secret.utf8)), secret)
+        }
+    }
+
     func testAccountDataAndExtendedHistoryOfTheSamePlaysCountOnce() throws {
         // Account data has the end time to the minute and no album; extended history wins.
         let account = """
