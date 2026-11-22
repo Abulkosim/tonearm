@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import SwiftUI
 
 /// Renders the popover with sample data to PNGs at 2x. Used by CI for screenshots.
@@ -91,10 +92,16 @@ enum Snapshot {
     @MainActor
     private static func model(_ state: PlayState?, cover: SampleCover = .teal, track sample: SampleTrack = .standard,
                               position: Double = 83, askingPermission: Bool = false) -> PlayerModel {
+        model(state, cover: cover, song: sample.track, position: position, askingPermission: askingPermission)
+    }
+
+    @MainActor
+    private static func model(_ state: PlayState?, cover: SampleCover = .teal, song: Track,
+                              position: Double = 83, askingPermission: Bool = false) -> PlayerModel {
         let model = PlayerModel(live: false)
         if askingPermission { model.setPreviewAskingPermission() }
         if let state {
-            let track = state == .stopped ? nil : sample.track
+            let track = state == .stopped ? nil : song
             model.setPreview(
                 Playback(state: state, track: track, position: track == nil ? 0 : position, volume: 70),
                 artwork: track == nil ? nil : sampleArtwork(cover)
@@ -111,12 +118,14 @@ enum Snapshot {
     /// A mock menu bar: Tonearm's real label on the left, highlighted like an open item,
     /// and a few system items on the right.
     @MainActor
-    private static func menuBar<Label: View>(leading: CGFloat, @ViewBuilder label: () -> Label) -> some View {
+    private static func menuBar<Label: View>(leading: CGFloat, open: Bool = true,
+                                             @ViewBuilder label: () -> Label) -> some View {
         HStack(spacing: 16) {
             label()
                 .padding(.horizontal, 8)
                 .frame(height: 22)
-                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.white.opacity(0.22)))
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.white.opacity(open ? 0.22 : 0)))
             Spacer(minLength: 0)
             Image(systemName: "wifi")
             Image(systemName: "battery.75")
@@ -134,9 +143,10 @@ enum Snapshot {
     /// Puts the popover under a mock menu bar on a plain desktop, the way people see it.
     /// `bar` sets the menu bar title options; the label comes from `MenuBarLabel`.
     /// `minHeight` pads the desktop below, so frames of different scenes match in size.
+    /// `width` widens the desktop to the right.
     @MainActor
     private static func framed(_ model: PlayerModel, _ preview: PlayerView.Preview,
-                               bar: AppSettings? = nil, minHeight: CGFloat = 0) -> AnyView {
+                               bar: AppSettings? = nil, minHeight: CGFloat = 0, width: CGFloat? = nil) -> AnyView {
         let margin: CGFloat = 56
         let settings = bar ?? plainBar()
         let popover = PlayerView(preview: preview).environmentObject(model)
@@ -150,7 +160,7 @@ enum Snapshot {
                     .padding(.leading, margin)
                     .padding(.bottom, margin)
             }
-            .frame(width: 300 + margin * 2, alignment: .leading)
+            .frame(width: width ?? 300 + margin * 2, alignment: .leading)
             .frame(minHeight: minHeight, alignment: .top)
             .background(desktop)
             .environment(\.colorScheme, .dark)
@@ -321,25 +331,41 @@ enum Snapshot {
     }
 }
 
-// MARK: - README animation
+// MARK: - README and website images
 
+/// Renders every picture of Tonearm that the README and the website show, from the app's own
+/// views: the animation's frames and the stills. scripts/make-demo.sh runs it.
+///
+///     Tonearm --demo <dir> [--compare <dir>]
+///
+/// Liner Notes reads a sample listening history: two years of made-up plays by made-up
+/// artists, written as a Spotify extended streaming history export and imported into a
+/// temporary database, so every number in the pictures comes from the real import and stats
+/// code. With `--compare`, it also checks the stills against the ones in that directory and
+/// exits 1 if any is missing or looks different, so the README can't show an old app.
 extension Snapshot {
-    /// One step of the README animation: a popover state held for a moment.
-    private struct DemoScene {
-        var state: PlayState
-        var preview: PlayerView.Preview
-        var cover: SampleCover
-        var track: SampleTrack
-        /// Song position at the start of the scene; it advances while playing.
-        var position: Double
-    }
-
     /// Frames per second of the animation. scripts/make-demo.sh uses the same rate.
     static let demoFPS = 10
 
-    /// Writes the README animation as numbered PNG frames: a song plays, the next song
-    /// fades in with its own colors, then it pauses.
-    /// scripts/make-demo.sh turns the frames into docs/images/demo.gif.
+    /// The stills the README and the website use, by file name.
+    static let demoStills = ["player.png", "compact.png", "liner-notes.png", "share-card.png", "social.png"]
+
+    /// The two songs the player shows in the animation. Both are in the sample history.
+    static let demoSongs = [
+        Track(id: "spotify:track:4dGlassMorningOlaBrandt0", title: "Glass Morning", artist: "Ola Brandt",
+              album: "North of Here", artworkURL: nil, duration: 214),
+        Track(id: "spotify:track:4dHarborLightsJuniperVal", title: "Harbor Lights", artist: "Juniper Vale",
+              album: "Low Tide Radio", artworkURL: nil, duration: 198),
+    ]
+    /// Their covers: the player's sample covers.
+    static let demoCovers: [SampleCover] = [.teal, .warm]
+
+    /// The animation's canvas, in points: a strip of desktop under the menu bar, wide enough
+    /// for the Liner Notes window at its smallest width.
+    static let demoCanvas = CGSize(width: 920, height: 724)
+    /// The Liner Notes window in the animation: its minimum width, and a little taller.
+    static let demoWindow = CGSize(width: 840, height: 600)
+
     @MainActor
     static func renderDemo(to dir: URL) {
         do {
@@ -347,44 +373,206 @@ extension Snapshot {
         } catch {
             fail("cannot create \(dir.path): \(error)")
         }
-        let scenes = [
-            DemoScene(state: .playing, preview: .init(shuffling: true), cover: .teal, track: .standard, position: 83),
-            DemoScene(state: .playing, preview: .init(shuffling: true), cover: .warm, track: .second, position: 4),
-            DemoScene(state: .paused, preview: .init(shuffling: true), cover: .warm, track: .second, position: 7),
-        ]
-        let holdFrames = demoFPS * 5 / 2
-        // Short, so the two titles overlap only briefly.
-        let fadeFrames = 3
+        NSApplication.shared.appearance = NSAppearance(named: .darkAqua)
+        defer { NSApplication.shared.appearance = nil }
 
-        func render(_ scene: DemoScene, at seconds: Double, minHeight: CGFloat) -> CGImage {
-            let position = scene.state == .playing ? scene.position + seconds : scene.position
-            let view = framed(model(scene.state, cover: scene.cover, track: scene.track, position: position),
-                              scene.preview, minHeight: minHeight)
+        let history = DemoHistory.load()
+        let notes = history.model
+        guard let stats = notes.stats else { fail("the sample history has no stats") }
+
+        // The animation: a song plays, the next one fades in with its own colors, then the
+        // Liner Notes window opens over the desktop.
+        let playing = PlayerView.Preview(shuffling: true)
+        func playerFrame(_ song: Int, at seconds: Double) -> CGImage {
+            let start: Double = song == 0 ? 83 : 4
+            let view = framed(model(.playing, cover: demoCovers[song], song: demoSongs[song], position: start + seconds),
+                              playing, minHeight: demoCanvas.height, width: demoCanvas.width)
             guard let cg = image(view) else { fail("render failed for a demo frame") }
             return cg
         }
-
-        // Scenes can differ in height (the compact layout is shorter); pad every frame to the tallest.
-        let tallest = scenes.map { CGFloat(render($0, at: 0, minHeight: 0).height) / 2 }.max() ?? 0
-
+        guard let notesFrame = image(linerNotesScene(notes)) else { fail("render failed for the Liner Notes frame") }
+        let scenes: [(seconds: Double, frame: (Double) -> CGImage)] = [
+            (2.5, { playerFrame(0, at: $0) }),
+            (2.5, { playerFrame(1, at: $0) }),
+            (4, { _ in notesFrame }),
+        ]
+        let fadeFrames = 3
         var index = 0
         func emit(_ cg: CGImage) {
             index += 1
             write(cg, to: dir.appendingPathComponent(String(format: "frame-%04d.png", index)))
         }
         for (i, scene) in scenes.enumerated() {
+            let frames = Int(scene.seconds * Double(demoFPS))
             var last: CGImage?
-            for f in 0..<holdFrames {
-                let cg = render(scene, at: Double(f) / Double(demoFPS), minHeight: tallest)
+            for f in 0..<frames {
+                let cg = scene.frame(Double(f) / Double(demoFPS))
                 emit(cg)
                 last = cg
             }
             guard let from = last else { continue }
-            let next = render(scenes[(i + 1) % scenes.count], at: 0, minHeight: tallest)
+            let next = scenes[(i + 1) % scenes.count].frame(0)
             for f in 1...fadeFrames {
                 emit(blend(from, next, amount: CGFloat(f) / CGFloat(fadeFrames + 1)))
             }
         }
+
+        // The stills.
+        let first = model(.playing, cover: demoCovers[0], song: demoSongs[0])
+        write(framed(first, playing), to: dir.appendingPathComponent("player.png"))
+        write(framed(first, PlayerView.Preview(layout: .compact, shuffling: true)),
+              to: dir.appendingPathComponent("compact.png"))
+        write(AnyView(window(notes, size: LinerNotesWindow.defaultSize).environment(\.colorScheme, .dark)),
+              to: dir.appendingPathComponent("liner-notes.png"))
+        guard let card = ShareCard.make(notes)?.render() else { fail("no share card for the sample history") }
+        write(card, to: dir.appendingPathComponent("share-card.png"))
+        let social = ImageRenderer(content: socialScene(notes, player: first))
+        social.scale = 1
+        guard let socialImage = social.cgImage else { fail("render failed for social.png") }
+        write(socialImage, to: dir.appendingPathComponent("social.png"))
+
+        var report = """
+            Sample history: \(history.rows) rows imported, \(LinerFormat.number(history.total)) entries stored.
+            Liner Notes shows \(notes.period): \(LinerFormat.number(Int(stats.music.ms / 60_000))) minutes, \
+            \(LinerFormat.number(stats.music.listens)) plays, top artist \(stats.music.topArtists.first?.name ?? "none"), \
+            top song \(stats.music.topTracks.first?.name ?? "none"), top album \(stats.music.topAlbums.first?.name ?? "none").
+            Animation: \(index) frames at \(demoFPS) fps.
+
+            """
+        var stale = false
+        if let i = CommandLine.arguments.firstIndex(of: "--compare"), i + 1 < CommandLine.arguments.count {
+            let committed = URL(fileURLWithPath: CommandLine.arguments[i + 1])
+            report += "Compared with \(committed.path):\n"
+            for name in demoStills {
+                let result = compare(dir.appendingPathComponent(name), committed.appendingPathComponent(name))
+                if !result.same { stale = true }
+                report += "  \(name)  \(result.note)\n"
+            }
+            if stale {
+                report += "\nThe pictures in \(committed.path) are out of date. Run scripts/make-demo.sh and commit them.\n"
+            }
+        }
+        do {
+            try report.write(to: dir.appendingPathComponent("report.txt"), atomically: true, encoding: .utf8)
+        } catch {
+            fail("cannot write report.txt: \(error)")
+        }
+        print(report, terminator: "")
+        if stale { exit(1) }
+    }
+
+    /// The Liner Notes window, with a title bar like the real one, in dark mode.
+    @MainActor
+    private static func window(_ notes: LinerNotesModel, size: CGSize) -> some View {
+        VStack(spacing: 0) {
+            ZStack {
+                Text("Liner Notes")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.5))
+                HStack(spacing: 8) {
+                    Circle().fill(Color(red: 1, green: 0.37, blue: 0.34)).frame(width: 12, height: 12)
+                    Circle().fill(Color(red: 1, green: 0.74, blue: 0.18)).frame(width: 12, height: 12)
+                    Circle().fill(Color(red: 0.16, green: 0.78, blue: 0.25)).frame(width: 12, height: 12)
+                }
+                .padding(.leading, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(height: 28)
+            .background(Color(white: 0.16))
+            Rectangle().fill(Color.black).frame(height: 1)
+            LinerNotesView(model: notes)
+                .frame(width: size.width, height: size.height, alignment: .top)
+                .clipped()
+        }
+        .frame(width: size.width)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+    }
+
+    /// The last scene of the animation: the player has closed and Liner Notes is open.
+    @MainActor
+    private static func linerNotesScene(_ notes: LinerNotesModel) -> AnyView {
+        let player = model(.playing, cover: demoCovers[1], song: demoSongs[1])
+        return AnyView(
+            VStack(spacing: 0) {
+                menuBar(leading: 56 - 8, open: false) { MenuBarLabel(model: player, settings: plainBar()) }
+                window(notes, size: demoWindow)
+                    .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
+                    .padding(.top, 28)
+                Spacer(minLength: 0)
+            }
+            .frame(width: demoCanvas.width, height: demoCanvas.height)
+            .background(desktop)
+            .environment(\.colorScheme, .dark)
+        )
+    }
+
+    /// The website's social preview, 1200 x 630: the player open over the Liner Notes window.
+    @MainActor
+    private static func socialScene(_ notes: LinerNotesModel, player: PlayerModel) -> some View {
+        let size = CGSize(width: 1200, height: 630)
+        return ZStack(alignment: .topLeading) {
+            desktop
+            window(notes, size: demoWindow)
+                .shadow(color: .black.opacity(0.45), radius: 24, y: 12)
+                .padding(.leading, size.width - demoWindow.width - 48)
+                .padding(.top, 64)
+            framedOver(player)
+        }
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+        .clipped()
+        .environment(\.colorScheme, .dark)
+    }
+
+    /// The menu bar across the whole width and the open player under it, with no desktop
+    /// behind, to lay over another picture.
+    @MainActor
+    private static func framedOver(_ player: PlayerModel) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            menuBar(leading: 56 - 8) { MenuBarLabel(model: player, settings: plainBar()) }
+            PlayerView(preview: PlayerView.Preview(shuffling: true)).environmentObject(player)
+                .popoverWindowShape()
+                .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
+                .padding(.top, 6)
+                .padding(.leading, 56)
+        }
+    }
+
+    /// Compares two PNGs pixel by pixel. They count as the same when they have the same size
+    /// and under 0.1% of pixels differ by more than 16 levels in a channel, which allows for
+    /// antialiasing noise between runs but not for a moved or changed control.
+    static func compare(_ fresh: URL, _ committed: URL) -> (same: Bool, note: String) {
+        guard FileManager.default.fileExists(atPath: committed.path) else { return (false, "MISSING") }
+        guard let a = pixels(fresh), let b = pixels(committed) else { return (false, "UNREADABLE") }
+        guard a.width == b.width, a.height == b.height else {
+            return (false, "DIFFERENT SIZE: \(b.width)x\(b.height) px committed, \(a.width)x\(a.height) px now")
+        }
+        var differing = 0
+        for p in stride(from: 0, to: a.bytes.count, by: 4) {
+            for c in 0..<4 where abs(Int(a.bytes[p + c]) - Int(b.bytes[p + c])) > 16 {
+                differing += 1
+                break
+            }
+        }
+        let share = Double(differing) / Double(a.width * a.height)
+        let note = String(format: "%.3f%% of pixels differ", share * 100)
+        return share < 0.001 ? (true, "same (\(note))") : (false, "DIFFERENT: \(note)")
+    }
+
+    private static func pixels(_ url: URL) -> (width: Int, height: Int, bytes: [UInt8])? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cg = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+        var bytes = [UInt8](repeating: 0, count: cg.width * cg.height * 4)
+        let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
+            guard let ctx = CGContext(data: buffer.baseAddress, width: cg.width, height: cg.height,
+                                      bitsPerComponent: 8, bytesPerRow: cg.width * 4, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+            return true
+        }
+        return drawn ? (cg.width, cg.height, bytes) : nil
     }
 
     /// Draws `to` over `from` at the given opacity.
@@ -402,3 +590,188 @@ extension Snapshot {
         return out
     }
 }
+
+/// Two years of made-up listening, 2024 and 2025, for the README and website pictures.
+/// Every artist, album and song name is invented. The same every run: the random numbers
+/// come from a fixed seed.
+private enum DemoHistory {
+    struct Loaded {
+        var model: LinerNotesModel
+        var rows: Int
+        var total: Int
+    }
+
+    /// Artist, album, then each song with its length in seconds. Earlier artists and songs
+    /// get played more.
+    static let catalog: [(artist: String, album: String, songs: [(String, Int)])] = [
+        ("Juniper Vale", "Low Tide Radio",
+         [("Harbor Lights", 198), ("Paper Boats", 231), ("Low Tide Radio", 241), ("Salt in the Air", 187),
+          ("Slow Return", 263)]),
+        ("Ola Brandt", "North of Here",
+         [("Glass Morning", 214), ("North of Here", 225), ("Kestrel", 176), ("Long Way Round", 252)]),
+        ("The Quiet Orbits", "Static Summer", [("Static Summer", 205), ("Night Bus", 243), ("Wire and Wool", 199)]),
+        ("Mina Sato", "Small Hours", [("Small Hours", 218), ("Lantern", 192), ("After the Rain", 236)]),
+        ("Teodor Lind", "Winter Tapes", [("Winter Tapes", 251), ("Snowlight", 207), ("Radiator", 184)]),
+        ("Ama Sefa", "Golden Hour Club", [("Golden Hour Club", 229), ("Sunday Market", 201)]),
+        ("Moth Parade", "Ceiling Fan", [("Ceiling Fan", 188), ("Porch Light", 214)]),
+        ("Ines Calloway", "Rooms", [("Rooms", 246), ("Hallway Song", 203)]),
+    ]
+    /// A long tail of artists with one song each, played now and then.
+    static let tailFirst = ["Lena", "Otto", "Rafa", "Noor", "Kai", "Yuki", "Tomas", "Ada", "Elio", "Sami"]
+    static let tailLast = ["Varga", "Holm", "Okoye", "Duarte", "Quist", "Moreau", "Ferro", "Nyberg"]
+    static let tailTitles = ["Hello Again", "Open Water", "Late Train", "Common Ground", "Blue Hour"]
+
+    struct Song {
+        var title: String
+        var artist: String
+        var album: String
+        var uri: String
+        var ms: Int
+        var weight: Double
+    }
+
+    /// SplitMix64: small, and the same on every machine.
+    struct Random {
+        var state: UInt64
+        mutating func next() -> UInt64 {
+            state &+= 0x9E37_79B9_7F4A_7C15
+            var z = state
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+            return z ^ (z >> 31)
+        }
+        mutating func unit() -> Double { Double(next() >> 11) / Double(UInt64(1) << 53) }
+        mutating func int(_ range: ClosedRange<Int>) -> Int {
+            range.lowerBound + Int(next() % UInt64(range.count))
+        }
+    }
+
+    static func catalogSongs() -> [Song] {
+        var random = Random(state: 7)
+        let chars = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+        func uri() -> String {
+            "spotify:track:" + String((0..<22).map { _ in chars[Int(random.next() % 62)] })
+        }
+        var songs: [Song] = []
+        for (a, entry) in catalog.enumerated() {
+            for (s, song) in entry.songs.enumerated() {
+                let weight = 1 / pow(Double(a + 1), 1.1) / pow(Double(s + 1), 0.8)
+                songs.append(Song(title: song.0, artist: entry.artist, album: entry.album, uri: uri(),
+                                  ms: song.1 * 1000, weight: weight))
+            }
+        }
+        for first in tailFirst {
+            for last in tailLast {
+                let title = tailTitles[random.int(0...tailTitles.count - 1)]
+                songs.append(Song(title: title, artist: "\(first) \(last)", album: "\(title) (Single)", uri: uri(),
+                                  ms: random.int(150...280) * 1000, weight: 0.02))
+            }
+        }
+        return songs
+    }
+
+    /// Rows in Spotify's extended streaming history format.
+    static func exportRows() -> [[String: Any]] {
+        let songs = catalogSongs()
+        let total = songs.reduce(0) { $0 + $1.weight }
+        var random = Random(state: 2024)
+        func pick() -> Song {
+            var x = random.unit() * total
+            for song in songs {
+                x -= song.weight
+                if x <= 0 { return song }
+            }
+            return songs[songs.count - 1]
+        }
+        // How often a session starts in each hour of the day (UTC).
+        let hours: [Double] = [1, 0.5, 0.2, 0, 0, 0, 0.3, 2, 4, 3, 2, 2, 3, 3, 2, 2, 3, 4, 5, 6, 7, 6, 4, 2]
+        let hourTotal = hours.reduce(0, +)
+        func startHour() -> Int {
+            var x = random.unit() * hourTotal
+            for (h, w) in hours.enumerated() {
+                x -= w
+                if x <= 0 { return h }
+            }
+            return 20
+        }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        formatter.timeZone = TimeZone(identifier: "UTC")
+
+        var rows: [[String: Any]] = []
+        let first = LocalDay(year: 2024, month: 1, day: 1)
+        let last = LocalDay(year: 2025, month: 12, day: 31)
+        for number in first.number...last.number {
+            let day = LocalDay(number: number)
+            if random.unit() < 0.06 { continue }
+            var minutes = 30 + random.unit() * 60 + (day.weekday >= 5 ? 25 : 0)
+            if random.unit() < 0.03 { minutes *= 3 }
+            let midnight = TimeInterval(day.number) * 86_400
+            while minutes > 0 {
+                var clock = midnight + TimeInterval(startHour() * 3600 + random.int(0...3599))
+                var session = Double(random.int(15...70))
+                while session > 0, minutes > 0 {
+                    let song = pick()
+                    let skipped = random.unit() < 0.12
+                    let ms = skipped ? random.int(4...28) * 1000 : song.ms
+                    clock += TimeInterval(ms / 1000)
+                    rows.append([
+                        "ts": formatter.string(from: Date(timeIntervalSince1970: clock)),
+                        "platform": "OS X", "ms_played": ms, "conn_country": "ZZ",
+                        "master_metadata_track_name": song.title,
+                        "master_metadata_album_artist_name": song.artist,
+                        "master_metadata_album_album_name": song.album,
+                        "spotify_track_uri": song.uri,
+                        "episode_name": NSNull(), "episode_show_name": NSNull(), "spotify_episode_uri": NSNull(),
+                        "reason_start": "trackdone", "reason_end": skipped ? "fwdbtn" : "trackdone",
+                        "shuffle": true, "skipped": skipped, "offline": false, "incognito_mode": false,
+                    ])
+                    session -= Double(ms) / 60_000
+                    minutes -= Double(ms) / 60_000
+                }
+            }
+        }
+        return rows
+    }
+
+    /// Writes the export, imports it into a temporary database, and builds the Liner Notes
+    /// model for 2025, with the covers of the two songs the player showed.
+    @MainActor
+    static func load() -> Loaded {
+        let tz = TimeZone(identifier: "UTC")!
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent("tonearm-demo-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let export = temp.appendingPathComponent("Spotify Extended Streaming History")
+        let rows = exportRows()
+        do {
+            try FileManager.default.createDirectory(at: export, withIntermediateDirectories: true)
+            let data = try JSONSerialization.data(withJSONObject: rows)
+            try data.write(to: export.appendingPathComponent("Streaming_History_Audio_2024-2025_0.json"))
+        } catch {
+            Snapshot.fail("cannot write the sample history: \(error)")
+        }
+        let store = HistoryStore(url: temp.appendingPathComponent("history.sqlite"))
+        let period = Period.year(2025)
+        let years: [Int], total: Int, stats: Stats
+        do {
+            _ = try store.sync { try $0.importNow(urls: [export]) }
+            years = try store.sync { try $0.yearsNow(timeZone: tz) }
+            total = try store.sync { try $0.countNow() }
+            stats = try store.sync { try $0.statsNow(for: period, timeZone: tz) }
+        } catch {
+            Snapshot.fail("cannot import the sample history: \(error)")
+        }
+        var artwork = ArtworkIndex()
+        var images: [String: NSImage] = [:]
+        for (song, cover) in zip(Snapshot.demoSongs, Snapshot.demoCovers) {
+            let key = "demo:\(song.title)"
+            artwork.add(title: song.title, artist: song.artist, album: song.album, url: key)
+            images[key] = Snapshot.sampleArtwork(cover)
+        }
+        let now = LocalDay(year: 2026, month: 1, day: 5).date(in: tz).addingTimeInterval(12 * 3600)
+        let model = LinerNotesModel(snapshot: .ready, period: period, stats: stats, years: years, total: total,
+                                    artwork: artwork, images: images, now: now, timeZone: tz)
+        return Loaded(model: model, rows: rows.count, total: total)
+    }
+}
+

@@ -1,13 +1,24 @@
 #!/usr/bin/env bash
-# Renders the README animation from the app's own views with sample songs.
+# Renders every picture of Tonearm in the README and on the website, from the app's own
+# views with a made-up listening history: the animation demo.gif and the stills
+# player.png, compact.png, liner-notes.png, share-card.png and social.png.
 #
-#   scripts/make-demo.sh [out.gif]     default: docs/images/demo.gif
+#   scripts/make-demo.sh [out dir]          default: docs/images
+#   scripts/make-demo.sh --check [out dir]  also fails if docs/images differs from the render
+#
+# The numbers in the pictures come from the app's import and stats code; build/demo-frames/
+# report.txt lists them.
 #
 # Needs a built app (scripts/build-app.sh) and gifski (brew install gifski).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-out="${1:-docs/images/demo.gif}"
+check=()
+if [[ "${1:-}" == "--check" ]]; then
+  check=(--compare docs/images)
+  shift
+fi
+out="${1:-docs/images}"
 app="build/Tonearm.app/Contents/MacOS/Tonearm"
 frames="build/demo-frames"
 
@@ -15,7 +26,16 @@ frames="build/demo-frames"
 command -v gifski > /dev/null || { echo "make-demo: install gifski: brew install gifski" >&2; exit 1; }
 
 rm -rf "$frames"
-"$app" --demo "$frames"
-# 10 fps matches Snapshot.demoFPS. 824 px is the 2x render of the 412 pt frame.
-gifski --fps 10 --quality 90 --width 824 --output "$out" "$frames"/frame-*.png
+mkdir -p "$out"
+# With --check, the app exits 1 after writing everything when a still differs.
+status=0
+"$app" --demo "$frames" ${check[@]+"${check[@]}"} || status=$?
+[[ -f "$frames/report.txt" ]] || { echo "make-demo: the app wrote no report (exit $status)" >&2; exit 1; }
+# 10 fps matches Snapshot.demoFPS. 1380 px is 1.5x the 920 pt canvas: sharp at the
+# README's 690 px width on a Retina screen, and half the size of a 2x GIF.
+gifski --fps 10 --quality 90 --width 1380 --output "$out/demo.gif" "$frames"/frame-*.png
+for still in player.png compact.png liner-notes.png share-card.png social.png; do
+  cp "$frames/$still" "$out/$still"
+done
 ls -l "$out"
+exit "$status"

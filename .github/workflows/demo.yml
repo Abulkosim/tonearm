@@ -1,11 +1,27 @@
 name: Demo
 
-# Renders docs/images/demo.gif, the README animation. Download the artifact and
-# commit it when the player's look changes.
+# Renders the README and website pictures (docs/images) from the app and fails if the
+# committed ones are out of date, so the README never shows an old app. Also checks every
+# link in the docs and the website. To update the pictures, download the demo artifact
+# into docs/images, or run scripts/make-demo.sh on a Mac, and commit them.
 on:
   pull_request:
     paths:
-      - Sources/Tonearm/Snapshot.swift
+      - Sources/Tonearm/**
+      - docs/**
+      - site/**
+      - "*.md"
+      - packaging/homebrew/**
+      - scripts/make-demo.sh
+      - scripts/build-app.sh
+      - .github/workflows/demo.yml
+  push:
+    branches: [main]
+    paths:
+      - Sources/Tonearm/**
+      - docs/**
+      - site/**
+      - "*.md"
       - scripts/make-demo.sh
       - .github/workflows/demo.yml
   workflow_dispatch:
@@ -30,13 +46,25 @@ jobs:
         run: scripts/build-app.sh
       - name: Install gifski
         run: brew install gifski
-      - name: Render
-        run: scripts/make-demo.sh build/demo.gif
+      - name: Render and compare with docs/images
+        run: scripts/make-demo.sh --check build/demo
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
         with:
           name: demo
           path: |
-            build/demo.gif
-            build/demo-frames/frame-0001.png
+            build/demo/
+            build/demo-frames/report.txt
           if-no-files-found: error
           retention-days: 14
+
+  links:
+    name: Check links
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check every link in the docs and the website
+        run: python3 docs/check-links.py
