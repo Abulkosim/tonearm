@@ -21,7 +21,11 @@ green() {
   run "Build and snapshot"; run "Self-signed build"; run "Scripts and release notes"
   run "E2E with fake Spotify"
 }
+# but <name>: the green runs without that check.
+but() { green | jq -c --arg name "$1" 'select(.name != $name)'; }
 # expect <pass|fail> <case> < runs as JSON objects
+# Called with < <(...), never at the end of a pipe: a pipe would run it in a subshell, and
+# its count of failures would be lost.
 expect() {
   local want="$1" name="$2" got=pass
   jq -s . > "$work/runs.json"
@@ -35,26 +39,25 @@ expect() {
   fi
 }
 
-green | expect pass "all required checks passed"
-{ green; run "Fake matches Spotify's dictionary" completed failure; } | expect pass "a check that is not required failed"
-{ green | jq -c 'select(.name != "E2E with fake Spotify")'; } | expect fail "a required check is missing"
-{ green | jq -c 'select(.name != "Self-signed build")'; run "Self-signed build" completed failure; } \
-  | expect fail "a required check failed"
-{ green | jq -c 'select(.name != "Self-signed build")'; run "Self-signed build" completed cancelled; } \
-  | expect fail "a required check was cancelled"
-{ green | jq -c 'select(.name != "E2E with fake Spotify")'; run "E2E with fake Spotify" completed skipped; } \
-  | expect fail "a required check was skipped"
-{ green | jq -c 'select(.name != "Build and snapshot")'; run "Build and snapshot" in_progress; } \
-  | expect fail "a required check is still running, no time to wait"
-{ green | jq -c 'select(.name != "Build and snapshot")'
+expect pass "all required checks passed" < <(green)
+expect pass "a check that is not required failed" \
+  < <(green; run "Fake matches Spotify's dictionary" completed failure)
+expect fail "a required check is missing" < <(but "E2E with fake Spotify")
+expect fail "a required check failed" < <(but "Self-signed build"; run "Self-signed build" completed failure)
+expect fail "a required check was cancelled" \
+  < <(but "Self-signed build"; run "Self-signed build" completed cancelled)
+expect fail "a required check was skipped" \
+  < <(but "E2E with fake Spotify"; run "E2E with fake Spotify" completed skipped)
+expect fail "a required check is still running, no time to wait" \
+  < <(but "Build and snapshot"; run "Build and snapshot" in_progress)
+expect pass "a rerun passed after a failure" < <(but "Build and snapshot"
   run "Build and snapshot" completed failure 2026-01-01T00:00:00Z
-  run "Build and snapshot" completed success 2026-01-01T01:00:00Z; } | expect pass "a rerun passed after a failure"
-{ green | jq -c 'select(.name != "Build and snapshot")'
+  run "Build and snapshot" completed success 2026-01-01T01:00:00Z)
+expect fail "a rerun failed after a pass" < <(but "Build and snapshot"
   run "Build and snapshot" completed success 2026-01-01T00:00:00Z
-  run "Build and snapshot" completed failure 2026-01-01T01:00:00Z; } | expect fail "a rerun failed after a pass"
-{ green | jq -c 'select(.name != "Build and snapshot")'
-  run "Build and snapshot" completed success 2026-01-01T00:00:00Z some-other-app; } \
-  | expect fail "only another app reported the check"
+  run "Build and snapshot" completed failure 2026-01-01T01:00:00Z)
+expect fail "only another app reported the check" < <(but "Build and snapshot"
+  run "Build and snapshot" completed success 2026-01-01T00:00:00Z some-other-app)
 if CI_RUNS_FILE=/dev/null CI_WAIT_SECONDS=0 scripts/require-ci.sh not-a-sha > /dev/null 2>&1; then
   echo "FAIL: accepted a commit that is not a full sha"; failures=$((failures + 1))
 else
