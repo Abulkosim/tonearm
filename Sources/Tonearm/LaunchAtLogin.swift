@@ -3,6 +3,7 @@ import ServiceManagement
 
 /// Wraps SMAppService.mainApp. Only works when running from a real .app bundle;
 /// failures are logged and the switch falls back to the real status.
+@MainActor
 final class LaunchAtLogin: ObservableObject {
     static let shared = LaunchAtLogin()
 
