@@ -531,8 +531,9 @@ extension Snapshot {
     }
 
     /// Compares two PNGs pixel by pixel. They count as the same when they have the same size
-    /// and under 0.1% of pixels differ by more than 16 levels in a channel, which allows for
-    /// antialiasing noise between runs but not for a moved or changed control.
+    /// and at most 0.001% of pixels differ by more than 16 levels in a channel. Renders on CI
+    /// come out identical run to run, so the room is small on purpose: one changed digit in
+    /// a number (a few hundred pixels) must fail, or the pictures could show old numbers.
     static func compare(_ fresh: URL, _ committed: URL) -> (same: Bool, note: String) {
         guard FileManager.default.fileExists(atPath: committed.path) else { return (false, "MISSING") }
         guard let a = pixels(fresh), let b = pixels(committed) else { return (false, "UNREADABLE") }
@@ -547,8 +548,8 @@ extension Snapshot {
             }
         }
         let share = Double(differing) / Double(a.width * a.height)
-        let note = String(format: "%.3f%% of pixels differ", share * 100)
-        return share < 0.001 ? (true, "same (\(note))") : (false, "DIFFERENT: \(note)")
+        let note = String(format: "%d pixels (%.4f%%) differ", differing, share * 100)
+        return share <= 0.00001 ? (true, "same (\(note))") : (false, "DIFFERENT: \(note)")
     }
 
     private static func pixels(_ url: URL) -> (width: Int, height: Int, bytes: [UInt8])? {
