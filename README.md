@@ -85,6 +85,8 @@ While the player is open:
 
 Global shortcuts, if you turn them on in settings: ⌃⌥P play or pause, ⌃⌥N next, ⌃⌥B previous.
 
+In Liner Notes: ⌘1 to ⌘4 show a week, month, year or all time, ⌘← ⌘→ go to the previous or next one, and ⌘O imports a Spotify download. In the share card, ⌘S saves it.
+
 ## Permission
 
 Tonearm controls Spotify through Apple Events, so macOS asks once. If you clicked Don't Allow, open System Settings → Privacy & Security → Automation → Tonearm and turn on Spotify. If Tonearm isn't listed there, see [docs/permissions.md](docs/permissions.md).
