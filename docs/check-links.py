@@ -5,7 +5,8 @@
 
 Relative links must point at a file in the repository, and a #fragment at a heading in
 that Markdown file (GitHub's anchor rules) or an id in that HTML file. Files the Pages
-workflow copies into site/ count as present. Web links are fetched with curl and must not
+workflow copies into site/ count as present, and links to the website itself are checked
+against site/, since it is deployed from the same commit. Web links are fetched with curl and must not
 answer 404 or 410, or fail to connect. Other errors (403, 429, 5xx) only warn: some sites
 turn away scripts, and a check that fails on their mood would get ignored.
 
@@ -26,6 +27,8 @@ FILES = (
     + sorted(glob.glob("docs/*.md", root_dir=ROOT))
     + sorted(glob.glob(".github/ISSUE_TEMPLATE/*.yml", root_dir=ROOT))
 )
+# The website's address. Links into it are checked against site/ instead of fetched.
+SITE = "https://abulkosim.github.io/tonearm/"
 # Links not to check.
 IGNORE = set()
 URL = re.compile(r"""https?://[^\s<>"'`)\]]+""")
@@ -115,6 +118,12 @@ def main():
             continue
         for link in sorted(links(path)):
             if link.startswith(("mailto:", "data:")) or link in IGNORE:
+                continue
+            if link.startswith(SITE):
+                # The website is deployed from this commit, so check its files here, not online.
+                problem = check_local("site/index.html", link[len(SITE):].split("?")[0] or "index.html", site_files)
+                if problem:
+                    errors.append(f"{path}: {link}: {problem}")
                 continue
             if link.startswith(("http://", "https://")):
                 web.setdefault(link, []).append(path)
