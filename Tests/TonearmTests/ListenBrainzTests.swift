@@ -643,7 +643,8 @@ final class ListenBrainzSyncTests: XCTestCase {
             try Data("{\"pending\": [{\"track\": \"Song".utf8).write(to: file)
             let s = sync()
             XCTAssertTrue(FileManager.default.fileExists(atPath: copy.path))
-            XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+            // Starting writes a fresh, readable queue in its place.
+            XCTAssertNotNil(try? readSaved())
             if removeToken { s.disconnect() } else { s.deleteQueued() }
             XCTAssertFalse(FileManager.default.fileExists(atPath: copy.path), removeToken ? "remove token" : "delete all")
         }
