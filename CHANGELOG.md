@@ -2,6 +2,7 @@
 
 | Version | Date (UTC) | Changes |
 | --- | --- | --- |
+| [v0.4.1](changelogs/v0.4.1.md) | 2026-11-22 | Fixes the menu bar going blank, faster Liner Notes, VoiceOver throughout. |
 | [v0.4.0](changelogs/v0.4.0.md) | 2026-11-18 | Liner Notes: your listening history for any week, month or year, with Spotify import. |
 | [v0.3.4](changelogs/v0.3.4.md) | 2026-11-12 | Fixes settings being cut off and a crash when the window resized. |
 | [v0.3.3](changelogs/v0.3.3.md) | 2026-11-12 | Another fix for settings being cut off. |
