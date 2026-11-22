@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -35,9 +36,13 @@ final class LinerNotesModel: ObservableObject {
     @Published private(set) var images: [String: NSImage] = [:]
     @Published private(set) var artwork = ArtworkIndex()
 
-    let timeZone: TimeZone
+    /// Days, weeks and years are the Mac's. Follows the Mac when its time zone changes.
+    @Published private(set) var timeZone: TimeZone
     let isSnapshot: Bool
     private let store: HistoryStore?
+    /// The Mac's time zone now. Foundation keeps the first one it reads until told to forget it.
+    private let systemTimeZone: () -> TimeZone
+    private var timeZoneObserver: AnyCancellable?
     private let fixedNow: Date?
     private var started = false
     private var startedAt: Date?
@@ -50,12 +55,27 @@ final class LinerNotesModel: ObservableObject {
     var now: Date { fixedNow ?? Date() }
     var today: LocalDay { LocalDay(now, timeZone: timeZone) }
 
-    init(store: HistoryStore = .shared, timeZone: TimeZone = .current) {
+    /// `timeZone` defaults to the Mac's.
+    init(store: HistoryStore = .shared, timeZone: TimeZone? = nil,
+         systemTimeZone: @escaping () -> TimeZone = LinerNotesModel.currentSystemTimeZone,
+         notifications: NotificationCenter = .default) {
+        let timeZone = timeZone ?? systemTimeZone()
         self.store = store
         self.timeZone = timeZone
+        self.systemTimeZone = systemTimeZone
         isSnapshot = false
         fixedNow = nil
         period = .current(.year, timeZone: timeZone)
+        timeZoneObserver = notifications.publisher(for: .NSSystemTimeZoneDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.systemTimeZoneChanged() }
+            }
+    }
+
+    nonisolated static func currentSystemTimeZone() -> TimeZone {
+        NSTimeZone.resetSystemTimeZone()
+        return .current
     }
 
     /// Fixed state, for snapshots. Nothing is loaded.
@@ -66,6 +86,7 @@ final class LinerNotesModel: ObservableObject {
         isSnapshot = true
         fixedNow = now
         self.timeZone = timeZone
+        systemTimeZone = { timeZone }
         self.phase = phase
         self.period = period
         self.stats = stats
@@ -91,6 +112,16 @@ final class LinerNotesModel: ObservableObject {
     func windowBecameKey() {
         guard started, let lastRefresh, Date().timeIntervalSince(lastRefresh) > 2 else { return }
         Task { await refresh(quiet: true) }
+    }
+
+    /// The Mac moved to another time zone, say on a trip: days and years start at other
+    /// moments now, so the years and stats are read again. A period the user picked stays.
+    func systemTimeZoneChanged() {
+        let zone = systemTimeZone()
+        guard zone.identifier != timeZone.identifier else { return }
+        timeZone = zone
+        guard started, store != nil else { return }
+        Task { await refresh() }
     }
 
     /// Reads the years and count again, then the stats. Keeps the period the user chose.
