@@ -6,7 +6,8 @@ let package = Package(
     platforms: [.macOS(.v13)],
     dependencies: [
         // The one third-party dependency: Sparkle installs updates. Pinned to an exact
-        // version; scripts/sparkle-tools.sh downloads the matching command line tools.
+        // version. Dependabot proposes bumps; scripts/sparkle-tools.sh takes the command line
+        // tools from the same SwiftPM download, so they always match.
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.1"),
     ],
     targets: [

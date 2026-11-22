@@ -11,3 +11,15 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+  # Sparkle, the one Swift dependency. A bump changes Package.swift and Package.resolved;
+  # scripts/sparkle-tools.sh follows Package.resolved, and the release dry run and Update E2E
+  # run on such a pull request. Read Sparkle's release notes before merging.
+  - package-ecosystem: swift
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope
+    cooldown:
+      default-days: 7
