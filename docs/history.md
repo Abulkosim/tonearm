@@ -45,6 +45,22 @@ A new install has no history. Spotify will send you all of it:
 
 You can import the same files twice, or both kinds of export. Tonearm keeps one copy of each play. When a play is in the export and Tonearm also recorded it, the export's copy wins: Spotify's own numbers are more exact.
 
+The import reads the .zip on your Mac and keeps only the listening history. If Tonearm is stopped in the middle, nothing of that import is kept, and the unpacked copy of your download in the temporary folder is removed at the next import or launch.
+
+### What Spotify's files look like
+
+Spotify documents the fields on [Understanding my data](https://support.spotify.com/us/article/understanding-my-data/) and in the `ReadMeFirst_ExtendedStreamingHistory.pdf` inside the extended download. Neither says how the two kinds relate, so we checked real downloads that people published on GitHub with both kinds for the same months ([1](https://github.com/mungeraiden/quantified-self-project/tree/0a379031f6c83158ab4222940e8e251733d1cd2c/my_spotify_data), [2](https://github.com/egonik-unlp/my-spotify-data/tree/2b98dc7d48af2535d30ddb263c233a890d0b3f57), [3](https://github.com/HaniBou/Spotify-Habits/tree/03acdf2b3f92931d09bd57bb4a0236630f61dd2d/Data/Hani), [4](https://github.com/SigmaGrindset/spotify_stats/tree/4b5c7fa40d8663cef2b970494a9d103b94740cdf/api/public/data)), about 77,000 plays found in both:
+
+- Both give the time the play ended, in UTC. Account data's `endTime` is the extended `ts` cut to the minute: a play that ended at 01:42:31 says "01:42", never "01:43". Of the 38,075 plays that ended 30 seconds or more into a minute, where cutting and rounding differ, all but 6 were cut, and those 6 were the same song replayed with the same length.
+- `msPlayed` and `ms_played` are the same to the millisecond. So Tonearm matches a play across the two by its song, its artist, the minute it ended and the milliseconds played. The minute and the milliseconds alone pair 98.9 to 99.8% of account rows with an extended row in the months both cover; most of the rest are plays under 30 seconds.
+- `master_metadata_album_artist_name` is, despite its name, the song's artist: it equals account data's `artistName` in over 99.9% of plays.
+- About 0.3% of plays have a slightly different name in each kind, such as "Song (feat. Someone)" in one and "Song" in the other. If you import both kinds, those few plays in the months both cover count twice.
+- `reason_end` says how a play ended. Since about 2016 it is almost always set (`trackdone` when the song played to its end). Rows from before 2015 may have `""`, and old `endsong` files have it empty for about a quarter of rows and `skipped` empty for nearly all. Tonearm treats an empty reason as unknown, which matters only for ListenBrainz (below).
+- Old `endsong` files also have `ip_addr_decrypted`, `username` and `user_agent_decrypted`. The importer skips them like the rest.
+- In the older account data file, `StreamingHistory0.json`, podcast episodes look like songs: the show is `artistName` and the episode `trackName`. Tonearm can't tell them apart there, so it counts them as music. Newer downloads put them in `StreamingHistory_podcast_0.json`.
+
+The test fixture (`scripts/make-history-fixture.py`) and the importer's tests use these shapes.
+
 ## Export
 
 Settings → History → Export saves every entry, plays and the rest, as CSV or JSON, oldest first, with these columns:
@@ -57,7 +73,7 @@ In the CSV, text that starts with `=`, `+`, `-` or `@` gets a `'` in front, so E
 
 ## Delete
 
-Settings → History → Delete all history… asks first, with the number of plays and other entries, then deletes them all, and the kept covers. It also empties the ListenBrainz queue, since that holds song names. Nothing deleted stays on disk: Tonearm overwrites the freed space and clears SQLite's write-ahead log.
+Settings → History → Delete all history… asks first, with the number of plays and other entries, then deletes them all, and the kept covers. It also empties the ListenBrainz queue, since that holds song names. It also removes a share card waiting for the share menu and any unpacked Spotify download an interrupted import left behind. SQLite overwrites the deleted rows with zeros, then Tonearm rebuilds the database file and empties its write-ahead log, so no copy is left in Tonearm's files. It can't reach copies elsewhere, such as a Time Machine backup.
 
 Turning off Record listening stops recording at once and keeps what is already there.
 

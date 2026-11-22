@@ -439,7 +439,7 @@ def cmd_check(a):
             compared += 1
     print("twin: %d listens, %d stats in %.1f s" % (len(listens), compared, time.monotonic() - started))
 
-    # Privacy: values from ip_addr and platform must be in neither the database nor the
+    # Privacy: values from ip_addr, ip_addr_decrypted, username and platform must be in neither the database nor the
     # exports. conn_country is a two-letter code, too short to grep for; the schema test
     # shows there is no column for it. Tonearm has exited and closed the database by now,
     # which empties the WAL, so the WAL is checked by a Swift test with the store open.
@@ -447,7 +447,7 @@ def cmd_check(a):
     for path in (db, csv_path, json_path):
         with open(path, "rb") as f:
             blob = f.read()
-        for needle in (b"192.0.2.", b"fixture-platform"):
+        for needle in (b"192.0.2.", b"fixture-platform", b"fixture-user"):
             if needle in blob:
                 problems.append("privacy: %r found in %s" % (needle, os.path.basename(path)))
     with open(csv_path, encoding="utf-8") as f:

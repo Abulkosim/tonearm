@@ -14,6 +14,13 @@ an ad row, the same title by different artists, Cyrillic, CJK, Arabic and emoji 
 duplicate rows, files that overlap, the past year in both formats, and ip_addr,
 conn_country and platform in every extended row (Tonearm must never store them).
 
+The shapes follow real exports (see docs/history.md, "What Spotify's files look like"):
+account data pretty-printed with a space before each colon, its endTime the extended ts cut
+to the minute; current extended files pretty-printed; old endsong files on one line, with
+ip_addr_decrypted and username, null skipped and some null reason_end, and offline_timestamp
+in milliseconds; some old rows with "" reasons; and an older StreamingHistory0.json, where a
+podcast episode looks like a song (show as artistName, episode as trackName).
+
 Usage: make-history-fixture.py OUT_DIR [--rows N] [--seed S] [--zip FILE] [--extended-only]
 """
 import argparse
@@ -32,6 +39,7 @@ END = datetime(2025, 11, 30, tzinfo=UTC)
 IP_PREFIX = "192.0.2."
 COUNTRY = "ZZ"
 PLATFORM = "OS X 14.5.0 [arm 2] fixture-platform"
+USERNAME = "fixture-user"
 
 SPECIAL_ARTISTS = [
     "Кино", "Сплин", "Земфира", "Ёлка", "坂本龍一", "宇多田ヒカル", "아이유", "王菲",
@@ -165,6 +173,14 @@ def play_length(rng, duration):
     return max(0, duration + rng.randint(-400, 50))
 
 
+def account_json(rows):
+    """Account data as Spotify writes it: two-space indent, a space before each colon."""
+    def obj(r):
+        return "  {\n" + ",\n".join("    %s : %s" % (json.dumps(k, ensure_ascii=False), json.dumps(v, ensure_ascii=False))
+                                     for k, v in r.items()) + "\n  }"
+    return "[\n" + ",\n".join(obj(r) for r in rows) + "\n]" if rows else "[]"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out")
@@ -270,13 +286,28 @@ def main():
             files[os.path.join(ext_dir, name)] = part
     if video:
         files[os.path.join(ext_dir, "Streaming_History_Video_%d-%d.json" % (year(video[0]), year(video[-1])))] = video
-    # The older extended format name, with plays from 2018 nobody else has.
+    # The older extended format name, with plays from 2018 nobody else has, in its shape:
+    # the IP as ip_addr_decrypted, a username, skipped null, a quarter of reason_end null,
+    # offline_timestamp in milliseconds.
     old = []
     for i in range(40):
         tr = catalog.pick_track()
         end = utc_ms(datetime(2018, 6, 1, tzinfo=UTC)) + i * 600_000
-        old.append(extended_row(rng, end, play_length(rng, tr[4]), track=tr))
+        row = extended_row(rng, end, play_length(rng, tr[4]), track=tr)
+        row["ip_addr_decrypted"] = row.pop("ip_addr")
+        row["username"] = USERNAME
+        row["skipped"] = None
+        if rng.random() < 0.25:
+            row["reason_end"] = None
+        if row["offline_timestamp"] is not None:
+            row["offline_timestamp"] = (end - row["ms_played"])
+        for key in ("audiobook_title", "audiobook_uri", "audiobook_chapter_uri", "audiobook_chapter_title"):
+            del row[key]
+        old.append(row)
     files[os.path.join(args.out, "MyData", "endsong_0.json")] = old
+    # Rows from before 2015 in current exports may have "" for both reasons.
+    for r in rows[:200]:
+        r["reason_start"] = r["reason_end"] = ""
 
     if not args.extended_only:
         # Account data: the last year again, end time to the minute, fewer fields.
@@ -306,6 +337,18 @@ def main():
         for i in range(0, len(acc_music), 10_000):
             files[os.path.join(acc_dir, "StreamingHistory_music_%d.json" % (i // 10_000))] = acc_music[i:i + 10_000]
         files[os.path.join(acc_dir, "StreamingHistory_podcast_0.json")] = acc_pod
+        # The older account data name, from an earlier download: a few plays from 2018 no
+        # other file has, and a podcast episode in the song fields, as that format had it.
+        older = []
+        for i in range(20):
+            tr = catalog.pick_track()
+            end = utc_ms(datetime(2018, 9, 1, tzinfo=UTC)) + i * 600_000 + 37_000
+            older.append({"endTime": end_time_string(end), "artistName": tr[1], "trackName": tr[0],
+                          "msPlayed": play_length(rng, tr[4])})
+        ep = catalog.pick_episode()
+        older.append({"endTime": end_time_string(utc_ms(datetime(2018, 9, 2, 8, tzinfo=UTC))), "artistName": ep[1],
+                      "trackName": ep[0], "msPlayed": 1_800_000})
+        files[os.path.join(args.out, "Older Account Data", "StreamingHistory0.json")] = older
         # Files that are not streaming history, which must be ignored.
         files[os.path.join(acc_dir, "Userdata.json")] = {"username": "fixture", "country": COUNTRY}
         files[os.path.join(acc_dir, "Playlist1.json")] = {"playlists": []}
@@ -313,8 +356,15 @@ def main():
     total = 0
     for path, data in files.items():
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        name = os.path.basename(path)
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2 if isinstance(data, dict) else None)
+            if isinstance(data, list) and name.startswith("StreamingHistory"):
+                f.write(account_json(data))
+            elif isinstance(data, list) and name.startswith("Streaming_History_"):
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            else:
+                # endsong files are one line; other files don't matter.
+                json.dump(data, f, ensure_ascii=False, indent=2 if isinstance(data, dict) else None)
         if isinstance(data, list):
             total += len(data)
     print("wrote %d rows in %d files to %s" % (total, len(files), args.out))
