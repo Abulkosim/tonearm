@@ -40,6 +40,9 @@ enum LinerNotesWindow {
         requested = true
         NSApp.setActivationPolicy(.regular)
         Onboarding.activate()
+        // A menu bar app that just became a regular one can't always take the front on the
+        // same turn of the run loop; ask again on the next.
+        DispatchQueue.main.async { Onboarding.activate() }
         if let window, window.isVisible {
             window.makeKeyAndOrderFront(nil)
             return
