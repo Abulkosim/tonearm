@@ -232,10 +232,14 @@ if [ "${SKIP_LAUNCH:-}" = 1 ]; then
   exit 0
 fi
 
-# Launch: --snapshot renders PNGs and exits. dyld must load Sparkle first.
-"$bin" --snapshot "$work/arm64" > /dev/null
-[ -s "$work/arm64/settings.png" ] || fail "arm64 launch rendered nothing"
-if [ "$(uname -m)" = arm64 ] && arch -x86_64 /usr/bin/true 2> /dev/null; then
+# Launch: --snapshot renders PNGs and exits. dyld must load Sparkle first. An Intel Mac
+# runs the x86_64 slice natively and can't run arm64.
+host="$(uname -m)"
+"$bin" --snapshot "$work/$host" > /dev/null
+[ -s "$work/$host/settings.png" ] || fail "$host launch rendered nothing"
+if [ "$host" = x86_64 ]; then
+  launched="x86_64 (an Intel runner)"
+elif arch -x86_64 /usr/bin/true 2> /dev/null; then
   arch -x86_64 "$bin" --snapshot "$work/x86_64" > /dev/null
   [ -s "$work/x86_64/settings.png" ] || fail "x86_64 launch rendered nothing"
   launched="arm64 and x86_64"

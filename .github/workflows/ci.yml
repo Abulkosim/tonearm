@@ -140,6 +140,29 @@ jobs:
         if: always()
         run: security delete-keychain "$RUNNER_TEMP/tonearm-signing.keychain-db" || true
 
+  # Intel Macs run the x86_64 slice natively; the jobs above run it only under Rosetta.
+  # macos-15-intel and macos-15 are the oldest images GitHub offers: the macOS 13 and 14
+  # images are retired. So macOS 13 and 14 themselves are not tested here; check-app.sh checks
+  # that every binary asks for macOS 13.0 at most. Not a required check.
+  intel:
+    name: Intel build (macos-15-intel)
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: swift --version && sw_vers && uname -m
+      - name: Test
+        run: swift test
+      - name: Build app
+        run: scripts/build-app.sh
+      - name: Check app bundle and launch it
+        run: EXPECT_SIGNING=adhoc scripts/check-app.sh build/Tonearm.app
+      - name: Live launch
+        run: scripts/live-launch.sh build/Tonearm.app
+
   lint:
     name: Scripts and release notes
     runs-on: ubuntu-24.04
