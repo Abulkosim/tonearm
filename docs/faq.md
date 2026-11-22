@@ -41,9 +41,35 @@ To check that a download came from this repository's release workflow, compare i
 gh attestation verify Tonearm.dmg -R Abulkosim/tonearm
 ```
 
-## Does it use my Spotify account?
+## Does it work with Apple Music or other players?
 
-No. It never logs in and doesn't use the Spotify Web API. It asks the Spotify app on your Mac what's playing, the same way a script in Script Editor would.
+No. Tonearm works only with the Spotify desktop app. It talks to Spotify through Spotify's own AppleScript commands, and other players have different ones. It can't see Spotify playing in a browser or on your phone either, though Liner Notes can import those plays from Spotify's data export.
+
+## Does it use my Spotify account or the Spotify Web API?
+
+No. It never logs in and doesn't use the Web API. It asks the Spotify app on your Mac what's playing, the same way a script in Script Editor would.
+
+This is on purpose. The Web API needs every user to log in to Spotify through Tonearm, and Spotify lets an app in [development mode](https://developer.spotify.com/documentation/web-api/concepts/quota-modes) serve only the users its developer adds by hand. Since May 2025 Spotify [gives wider access](https://developer.spotify.com/blog/2025-04-15-updating-the-criteria-for-web-api-extended-access) only to established services. AppleScript needs no login and no approval, and it works with no network.
+
+The cost: Tonearm can only do what Spotify's AppleScript commands allow. It can't show lyrics, your playlists or the queue, or like a song.
+
+## Which Macs does it run on?
+
+Any Mac with macOS 13 Ventura or later, Apple Silicon or Intel. There is one download; it contains both.
+
+The automated tests run on GitHub's Apple Silicon Macs with macOS 15, because GitHub [retired](https://github.blog/changelog/2025-09-19-github-actions-macos-13-runner-image-is-closing-down/) its macOS 13 machines and [then](https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement) its macOS 14 ones. So macOS 13 and 14 and Intel Macs get less testing. If something is wrong there, please [open an issue](https://github.com/Abulkosim/tonearm/issues/new/choose).
+
+macOS 12 and earlier aren't supported: the player uses SwiftUI's menu bar window, which first came in macOS 13.
+
+## What does Tonearm know about me?
+
+Only what is on your Mac. It has no server, no account and no analytics. It makes these network requests:
+
+- the cover image of the song playing, from the address Spotify gives
+- once a day, GitHub's list of releases, to check for an update
+- if you turn it on, your listens to ListenBrainz
+
+Liner Notes makes none. Your listening history is a file on your Mac; see the next question.
 
 ## Does Tonearm send my listening history anywhere?
 
