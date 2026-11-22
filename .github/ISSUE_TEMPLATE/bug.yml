@@ -14,7 +14,20 @@ body:
     attributes:
       label: Tonearm version
       description: Open the player, click the gear. The version is at the bottom.
-      placeholder: "0.3.0"
+      placeholder: "0.4.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where
+      options:
+        - The player or the menu bar
+        - Liner Notes or the Spotify import
+        - Settings
+        - Updates
+        - First launch or the Spotify permission
+        - Something else
     validations:
       required: true
   - type: dropdown
