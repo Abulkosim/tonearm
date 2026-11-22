@@ -172,7 +172,22 @@ measure 1
 mark="$(log_size)"
 osascript -e 'tell application id "com.spotify.client" to play' > /dev/null
 wait_for_log "$mark" "posted playing" 10
-wait_for_log "$mark" "get player state" 10
+# Tonearm reads at once when Spotify's notification arrives. In two runs of eleven on CI it
+# had not read 10 s later, with its main thread idle: the notification came late or not at
+# all after Tonearm sat idle for over a minute. Say so, give it 50 s, and fail only if it
+# never notices, since "playing" means nothing while Tonearm thinks Spotify is paused.
+posted=$SECONDS
+while [ $((SECONDS - posted)) -lt 50 ]; do
+  [ "$(count_since "$mark" "get player state")" -gt 0 ] && break
+  sleep 0.1
+done
+late=$((SECONDS - posted))
+[ "$(count_since "$mark" "get player state")" -gt 0 ] ||
+  fail "Tonearm never read Spotify within 50 s of its \"playing\" notification"
+if [ "$late" -ge 10 ]; then
+  echo "::warning::idle-cost: Tonearm read Spotify ${late} s after its notification, not at once"
+  say "late notification: Tonearm read Spotify ${late} s after Spotify posted playing"
+fi
 sleep 5
 measure 2
 
