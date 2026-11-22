@@ -47,6 +47,7 @@ work="$(mktemp -d)"
 meter="$work/rusage"
 report="$out/idle-cost.txt"
 pid=""
+start_mark=0
 
 fail() { echo "::error::idle-cost: $*" >&2; exit 1; }
 [ -x "$FAKE_EXE" ] || fail "no fake Spotify at $FAKE; run scripts/e2e.sh first"
@@ -77,6 +78,18 @@ quit_fake() {
 # Called by the EXIT trap.
 # shellcheck disable=SC2317
 cleanup() {
+  local status=$?
+  # On failure, keep what explains it: where Tonearm's threads are, both logs, and every
+  # process that claims to be Spotify.
+  if [ "$status" -ne 0 ] && [ -n "$pid" ] && [ -d "$out" ]; then
+    {
+      echo "== Spotify processes"; pgrep -lf Spotify || true
+      echo "== fake log since idle-cost started"; tail -c "+$((start_mark + 1))" "$FAKE_LOG" 2>/dev/null || true
+      echo "== Tonearm log"; cat "$work/tonearm.log" 2>/dev/null || true
+      echo "== sample of Tonearm"; sample "$pid" 2 2>&1 || true
+    } > "$out/idle-cost-failure.txt" 2>&1
+    echo "idle-cost: details in $out/idle-cost-failure.txt" >&2
+  fi
   [ -z "$pid" ] || kill "$pid" 2>/dev/null || true
   quit_fake
   "$LSREGISTER" -u "$FAKE" 2>/dev/null || true
@@ -105,6 +118,7 @@ ps_cpu_ms() {
 swiftc -O -o "$meter" Tools/IdleCost/rusage.swift
 mkdir -p "$out" "$(dirname "$FAKE_LOG")"
 touch "$FAKE_LOG"
+start_mark="$(log_size)"
 quit_fake
 "$LSREGISTER" -f "$FAKE"
 defaults write "$bundle_id" SUEnableAutomaticChecks -bool false
