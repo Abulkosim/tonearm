@@ -16,7 +16,11 @@ import Foundation
 /// `PlayRecorder` adds what Tonearm hears live (`save(_:)`). Stats definitions are on `Stats`.
 /// The database is ~/Library/Application Support/Tonearm/history.sqlite.
 final class HistoryStore: @unchecked Sendable {
-    static let shared = HistoryStore(url: HistoryStore.defaultURL)
+    static let shared: HistoryStore = {
+        let store = HistoryStore(url: HistoryStore.defaultURL)
+        store.compactionDefaults = .standard
+        return store
+    }()
 
     static var defaultURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -39,6 +43,11 @@ final class HistoryStore: @unchecked Sendable {
     /// lies in one piece (see `compactNow`). `Tonearm --stats --no-compact` turns it off, to
     /// measure what it saves.
     var compactsAfterImport = true
+    /// Where `warm` remembers that it compacted the file once. Databases imported into by
+    /// v0.4.0 were never compacted, and would stay slow to read cold until the next import.
+    /// Nil (tests, `Tonearm --stats`) skips that.
+    var compactionDefaults: UserDefaults?
+    static let compactedKey = "historyCompacted"
     /// Set by `Tonearm --stats`: gets "name N ms" for each part of an import, a stats call
     /// and the launch warm-up, so the speed check can say where the time goes.
     var phaseLog: ((String) -> Void)?
@@ -133,6 +142,7 @@ final class HistoryStore: @unchecked Sendable {
         queue.async {
             HistoryFiles.removeLeftovers(in: self.temporaryDirectory, olderThan: Self.leftoverAge)
             guard FileManager.default.fileExists(atPath: self.url.path) else { return }
+            self.compactOnce()
             do {
                 try self.warmNow(timeZone: timeZone)
             } catch {
@@ -152,6 +162,18 @@ final class HistoryStore: @unchecked Sendable {
         let period = Period.opening(.year, years: years, now: now, timeZone: timeZone)
         _ = try statsNow(for: period, timeZone: timeZone)
         return period
+    }
+
+    /// Compacts the file the first time this Tonearm warms it (see `compactionDefaults`).
+    /// A compaction that fails or is cut off is tried again at the next launch.
+    func compactOnce() {
+        guard let defaults = compactionDefaults, !defaults.bool(forKey: Self.compactedKey) else { return }
+        do {
+            try timed("warm compact") { try compactNow() }
+            defaults.set(true, forKey: Self.compactedKey)
+        } catch {
+            NSLog("Tonearm: could not compact the history at launch: %@", "\(error)")
+        }
     }
 
     /// Runs `body`, and logs how long it took when `phaseLog` is set.

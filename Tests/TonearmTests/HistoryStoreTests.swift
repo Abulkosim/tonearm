@@ -624,6 +624,42 @@ final class HistoryStoreTests: XCTestCase {
     /// An import cut off by a crash or a kill leaves the unpacked export in the temporary
     /// folder: the next import or launch removes it once it is an hour old, and delete all
     /// removes it at once. Nothing else in the folder is touched.
+    /// A database v0.4.0 imported into was never compacted: the first launch of this version
+    /// compacts it once, in the launch warm-up, and later launches leave it.
+    func testLaunchCompactsADatabaseOnce() throws {
+        try write("Streaming_History_Audio_2024_0.json", extended)
+        let old = store()
+        old.compactsAfterImport = false
+        _ = try old.sync { try $0.importNow(urls: [dir.appendingPathComponent("export")]) }
+        let wal = URL(fileURLWithPath: old.url.path + "-wal")
+        XCTAssertGreaterThan(try Data(contentsOf: wal).count, 0, "the import's pages are still in the WAL")
+
+        let suite = "tonearm-test-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        for launch in 1...2 {
+            let s = store()
+            s.compactionDefaults = defaults
+            var phases: [String] = []
+            s.phaseLog = { phases.append($0) }
+            s.warm(timeZone: TimeZone(identifier: "UTC")!)
+            s.flush()
+            XCTAssertEqual(phases.filter { $0.hasPrefix("warm compact") }.count, launch == 1 ? 1 : 0, "\(phases)")
+            XCTAssertTrue(defaults.bool(forKey: HistoryStore.compactedKey))
+            XCTAssertEqual(try Data(contentsOf: wal).count, 0)
+            XCTAssertEqual(try s.sync { try $0.countNow() }, 2)
+        }
+        // Without defaults (tests, Tonearm --stats) there is no launch compaction.
+        let cli = store()
+        var phases: [String] = []
+        cli.phaseLog = { phases.append($0) }
+        cli.warm(timeZone: TimeZone(identifier: "UTC")!)
+        cli.flush()
+        XCTAssertFalse(phases.contains { $0.hasPrefix("warm compact") }, "\(phases)")
+        // The first connection stays open to the end: closing the last one deletes the WAL.
+        withExtendedLifetime(old) {}
+    }
+
     func testUnpackedExportsLeftByACutOffImportAreRemoved() throws {
         let tmp = dir.appendingPathComponent("tmp")
         func folder(_ name: String, age: TimeInterval) throws -> URL {
