@@ -52,9 +52,15 @@ jobs:
         if: always()
         with:
           name: demo
+          # A few frames of the animation, to look at without decoding the GIF: the first,
+          # the middle of the first fade, the second song, and Liner Notes alone.
           path: |
             build/demo/
             build/demo-frames/report.txt
+            build/demo-frames/frame-0001.png
+            build/demo-frames/frame-0027.png
+            build/demo-frames/frame-0040.png
+            build/demo-frames/frame-0070.png
           if-no-files-found: error
           retention-days: 14
 
