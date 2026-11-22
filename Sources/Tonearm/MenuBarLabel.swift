@@ -16,14 +16,20 @@ struct MenuBarLabel: View {
                 Image(systemName: Self.appGlyph)
             }
         }
-        // VoiceOver read the glyph's name ("pause") as if it were a button.
+        // The status item reports only a title to VoiceOver (its AXTitle); a value set here
+        // never reaches it. So the song goes into the label.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Tonearm")
-        .accessibilityValue(model.status == .ready ? Self.spokenState(model.playback) : "")
+        .accessibilityLabel(Self.spokenLabel(model.status == .ready ? model.playback : nil))
     }
 
-    /// What VoiceOver reads after "Tonearm": the whole song, even when the title is cut short
-    /// or hidden. Pure, for tests.
+    /// The menu bar item's name for VoiceOver: "Tonearm", then the whole song, even when
+    /// the title is cut short or hidden. Pure, for tests.
+    static func spokenLabel(_ playback: Playback?) -> String {
+        let state = playback.map(spokenState) ?? ""
+        return state.isEmpty ? "Tonearm" : "Tonearm, " + state
+    }
+
+    /// "Playing A Song by An Artist", or "Paused, …". Empty with no song.
     static func spokenState(_ playback: Playback) -> String {
         guard playback.state != .stopped, let track = playback.track else { return "" }
         let title = singleLine(track.title), artist = singleLine(track.artist)
