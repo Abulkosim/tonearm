@@ -38,7 +38,8 @@ jobs:
         run: scripts/swift-warnings.sh build/build.log
       - name: Check app bundle and launch it
         run: EXPECT_SIGNING=adhoc scripts/check-app.sh build/Tonearm.app
-      # Starts the real app, which starts Sparkle, and checks it is still running after 10 s.
+      # Starts the real app, which starts Sparkle, and for 10 s checks that it is running and
+      # that its main thread answers an Apple Event within 5 s.
       - name: Live launch
         run: scripts/live-launch.sh build/Tonearm.app
       # Liner Notes: Tonearm's stats against a slow Python twin on a synthetic Spotify
@@ -122,7 +123,8 @@ jobs:
         run: scripts/build-app.sh
       - name: Check app bundle and launch it
         run: EXPECT_SIGNING=self-signed scripts/check-app.sh build/Tonearm.app
-      # The build users get: start the real app, with Sparkle, and check it is up after 10 s.
+      # The build users get: start the real app, with Sparkle, and check for 10 s that it is up
+      # and its main thread answers.
       - name: Live launch
         run: scripts/live-launch.sh build/Tonearm.app
       - name: Launch gate rejects the v0.3.0 signing
