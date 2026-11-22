@@ -9,9 +9,13 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels its older run. Runs on main get a group per commit and
+# always finish: scripts/require-ci.sh refuses to release a commit whose required checks were
+# cancelled, and with one group for main, a merge landing right after the release commit
+# cancelled its run (or replaced it while it waited).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:

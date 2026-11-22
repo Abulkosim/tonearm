@@ -10,7 +10,7 @@ A release is a pushed `vX.Y.Z` tag. [`release.yml`](../.github/workflows/release
 4. Add a row to the top of the table in `CHANGELOG.md` that links the new file.
 5. Check: `scripts/check-release.sh vX.Y.Z`. CI runs the same check for the version in `Info.plist`.
 6. Merge these changes to `main` through a pull request.
-7. Tag the merge commit and push the tag. You don't have to wait for CI on it: the workflow waits for it.
+7. Tag the newest commit on `main` and push the tag. Merges are rebases, so there is no merge commit, and CI runs only on the last commit of each push: tag that one, not an earlier commit of the pull request. You don't have to wait for CI on it: the workflow waits for it.
 
    ```sh
    git switch main && git pull
@@ -97,6 +97,8 @@ It can't prove: anything macOS checks that is not in this list, like Gatekeeper 
 `release.yml` builds and signs, but runs no tests, state walk, live launch or end-to-end test of its own. Those ran in CI on the commit. So before anything is built, the prepare job checks that the tagged commit is on `main` and that the newest GitHub Actions run of each required check (Build and snapshot, Self-signed build, Scripts and release notes, E2E with fake Spotify) passed on that exact commit. If a check is still running, it waits, up to 60 minutes; if one failed, was cancelled or skipped, the release stops. v0.4.0's tag was pushed 28 seconds after CI on its commit started; with this gate that release would have waited.
 
 The list of checks is in the script and must match the required checks of `main`'s branch protection. `scripts/require-ci-test.sh` tests the rule offline on every pull request.
+
+CI runs on `main` are never cancelled by a later push (each commit has its own concurrency group), so a merge right after the release commit can't fail this gate. If a required check did fail or was cancelled on the tagged commit, re-run it (`gh run rerun <id>`), wait until it passes, then re-run the failed release run (`gh run rerun <release run id>`); the tag stays.
 
 It can't prove: anything about checks that are not required (the Intel build, the dictionary check), or that branch protection still lists the same checks.
 

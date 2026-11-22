@@ -18,8 +18,10 @@ on:
 permissions:
   contents: read
 
+# Runs on main get a group per commit: with one group, a run waiting behind another is
+# replaced by the next one, and scripts/require-ci.sh refuses a commit whose check never ran.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
