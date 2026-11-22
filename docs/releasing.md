@@ -4,13 +4,13 @@ A release is a pushed `vX.Y.Z` tag. [`release.yml`](../.github/workflows/release
 
 ## Cut a release
 
-1. Make sure CI is green on `main`.
+1. Make sure CI is green on `main`. The release workflow checks this too and refuses otherwise.
 2. In `Resources/Info.plist`, set `CFBundleShortVersionString` to `X.Y.Z` and `CFBundleVersion` to the output of `scripts/build-number.sh X.Y.Z` (see [Version numbers](#version-numbers)).
 3. Write `changelogs/vX.Y.Z.md`: first line `# vX.Y.Z`, then the date and download link, then short bullets about what users will notice. Copy the layout of [v0.1.0](../changelogs/v0.1.0.md). The bullets also show in the update window, so write them for users.
 4. Add a row to the top of the table in `CHANGELOG.md` that links the new file.
 5. Check: `scripts/check-release.sh vX.Y.Z`. CI runs the same check for the version in `Info.plist`.
 6. Merge these changes to `main` through a pull request.
-7. Tag the merge commit and push the tag:
+7. Tag the merge commit and push the tag. You don't have to wait for CI on it: the workflow waits for it.
 
    ```sh
    git switch main && git pull
@@ -25,16 +25,16 @@ A release that is already published is never replaced; the workflow refuses. To 
 
 ## What the workflow does
 
-- **prepare** (Ubuntu, read-only): fails at once if `SPARKLE_ED_PRIVATE_KEY` is not set. Runs `scripts/check-release.sh` on the tag. It fails if the tag is not `vX.Y.Z`, if `changelogs/vX.Y.Z.md` or its `CHANGELOG.md` row is missing, or if `Info.plist` has another version or build number. It computes the build number with `scripts/build-number.sh`.
+- **prepare** (Ubuntu, read-only): fails at once if `SPARKLE_ED_PRIVATE_KEY` is not set. Runs `scripts/check-release.sh` on the tag. It fails if the tag is not `vX.Y.Z`, if `changelogs/vX.Y.Z.md` or its `CHANGELOG.md` row is missing, or if `Info.plist` has another version or build number. It computes the build number with `scripts/build-number.sh`. Then `scripts/require-ci.sh` refuses the release unless the tagged commit is on `main` and every required check passed on that exact commit (see [CI gate](#ci-gate-scriptsrequire-cish)). Nothing is built before that.
 - **build** (macos-15, read-only):
   - `scripts/build-app.sh` builds a universal (arm64 and x86_64) app, copies `Sparkle.framework` into `Contents/Frameworks`, writes the version and build number into `Info.plist`, and signs everything inside-out. Only Developer ID builds get the hardened runtime: in ad-hoc and self-signed builds its library validation would stop the app from loading Sparkle, because those signatures have no Team ID.
   - `scripts/package.sh` makes `Tonearm-X.Y.Z.zip`, `Tonearm-X.Y.Z.dmg` (with an Applications link), the same two files as `Tonearm.zip` and `Tonearm.dmg`, and `SHA256SUMS.txt`.
-  - `scripts/check-app.sh` unzips the app and runs the launch gate on it (see [Release gates](#release-gates)).
-  - `scripts/sparkle-tools.sh` downloads Sparkle's `sign_update` for the pinned version and checks its SHA-256. `scripts/appcast.sh` signs the versioned zip and writes `appcast.xml`, then checks the signature with `sign_update --verify` and with OpenSSL against the `SUPublicEDKey` in the built app.
+  - The packaged zip is unzipped, `scripts/check-app.sh` runs the launch gate on that app, and `scripts/live-launch.sh` opens it and checks its main thread answers for 10 s (see [Release gates](#release-gates)).
+  - `scripts/sparkle-tools.sh` copies Sparkle's `sign_update` from the archive SwiftPM downloaded for the app (see [Updates](#updates-sparkle)). `scripts/appcast.sh` signs the versioned zip and writes `appcast.xml`, then checks the signature with `sign_update --verify` and with OpenSSL against the `SUPublicEDKey` in the built app.
 - **update-e2e** (macos-15, read-only, no secrets): `update-e2e.yml` builds the tagged commit twice and the previous release tag once, and checks that each old build installs the new one through Sparkle (see [Release gates](#release-gates)). It runs next to **build**.
 - **release** (Ubuntu), only after **build** and **update-e2e** pass: verifies the checksums, checks the appcast signature again against the `SUPublicEDKey` in the tagged `Info.plist`, records build provenance for every file, and creates the release with `gh release create --latest`. The notes are `changelogs/vX.Y.Z.md` plus an install section that says how the build was signed. This is the only job with write access, and it alone gets the OIDC token and attestation permissions.
 
-Actions are pinned to commit SHAs. Dependabot proposes updates weekly.
+Actions are pinned to full commit SHAs; the lint job fails on any that is not (`scripts/check-action-pins.sh`). Dependabot proposes updates to the actions and to Sparkle weekly.
 
 ### Stable links
 
@@ -53,9 +53,24 @@ Pull requests that change the release workflow, the packaging scripts, `Package.
 gh workflow run release.yml -R Abulkosim/tonearm -f version=0.0.0-test
 ```
 
-A dry run builds and uploads the files as a `release-<version>` artifact. It never creates a release. Without `-f sign=true` it signs ad-hoc and signs the appcast with a throwaway key, so every step still runs. With `-f sign=true` it uses the repository secrets, if they exist. Pull requests never get the secrets.
+A dry run builds and uploads the files as a `release-<version>` artifact. It never creates a release. A manual dry run applies the CI gate like a tag push does, so it only runs on a commit on `main`; to dry-run changes on a branch, open a pull request. Without `-f sign=true` it signs ad-hoc and signs the appcast with a throwaway key, so every step still runs. With `-f sign=true` it uses the repository secrets, if they exist. Pull requests never get the secrets.
 
-CI also runs on every pull request: an ad-hoc build that is checked and launched, a build signed with a throwaway self-signed certificate that goes through the same import, trust, signing and launch steps as a release, and `scripts/package.sh`. A Swift compiler warning in the app build fails CI. Warnings in the tests are not counted.
+CI also runs on every pull request: an ad-hoc build that is checked and launched, a build signed with a throwaway self-signed certificate that goes through the same import, trust, signing and launch steps as a release, and `scripts/package.sh`. A compiler warning in the app or the tests, or a linker warning, fails CI (`scripts/swift-warnings.sh`).
+
+### What CI runs
+
+`ci.yml`, on every pull request and push to `main`:
+
+- **Build and snapshot** (macos-15, required): `swift test`, the universal app build, the warnings gate, the launch gate, the live launch, the Liner Notes checks and renders, the state walk, and `package.sh`. It uploads the renders (`liner-notes`, `snapshots`, `states`) and the versioned DMG and zip (`Tonearm-app`), kept 7 days.
+- **Self-signed build** (macos-15, required): the release signing path with a throwaway certificate, the launch gate test and a live launch.
+- **Intel build** (macos-15-intel, not required): tests, build, launch gate and live launch with the x86_64 slice running natively. The other jobs run it only under Rosetta.
+- **Scripts and release notes** (Ubuntu, required): ShellCheck on every shell script, [actionlint](https://github.com/rhysd/actionlint) on every workflow (it runs ShellCheck on each `run:` block too), the SHA pin check, the CI gate's own test (`scripts/require-ci-test.sh`), and `check-release.sh` for the version in `Info.plist`.
+
+`e2e.yml` runs the fake-Spotify end-to-end test (required) and `update-e2e.yml` the update test, described below.
+
+The oldest macOS images GitHub offers are macos-15 and macos-15-intel: the macOS 13 and 14 images are retired ([runner-images](https://github.com/actions/runner-images#available-images)). So nothing runs on macOS 13 or 14, the oldest versions Tonearm supports. `check-app.sh` checks that every binary asks for macOS 13.0 at most; whether it works there needs a person with such a Mac.
+
+`package.sh` makes the DMG in a folder Spotlight skips and waits until no other process has it open before each `hdiutil` call, because hdiutil failed twice on runners with "Resource busy" or "Resource temporarily unavailable" right after a create. If it still fails, the warning names the processes that had the image open.
 
 ## Release gates
 
@@ -77,13 +92,21 @@ Then it starts the app with `--snapshot` on arm64 and under Rosetta.
 
 It can't prove: anything macOS checks that is not in this list, like Gatekeeper on a quarantined download, a revoked certificate, or a change in a future macOS. CI runners do not enforce library validation, so the launch at the end proves only that dyld finds Sparkle.
 
+### CI gate: `scripts/require-ci.sh`
+
+`release.yml` builds and signs, but runs no tests, state walk, live launch or end-to-end test of its own. Those ran in CI on the commit. So before anything is built, the prepare job checks that the tagged commit is on `main` and that the newest GitHub Actions run of each required check (Build and snapshot, Self-signed build, Scripts and release notes, E2E with fake Spotify) passed on that exact commit. If a check is still running, it waits, up to 60 minutes; if one failed, was cancelled or skipped, the release stops. v0.4.0's tag was pushed 28 seconds after CI on its commit started; with this gate that release would have waited.
+
+The list of checks is in the script and must match the required checks of `main`'s branch protection. `scripts/require-ci-test.sh` tests the rule offline on every pull request.
+
+It can't prove: anything about checks that are not required (the Intel build, the dictionary check), or that branch protection still lists the same checks.
+
 ### Live launch
 
-CI opens the ad-hoc and the self-signed build with `open`, the way a user does, and checks the app is still running 10 seconds later (`scripts/live-launch.sh`). Sparkle starts, but its automatic checks are off for the launch. Otherwise a branch older than the latest release would download that release from the real feed and replace the build in place, and the later steps would test the published app. The script also fails if the bundle changed. This catches a crash at startup, including in Sparkle's start. On its own it would have passed v0.3.0, because the runner does not enforce library validation.
+CI opens the ad-hoc, self-signed and Intel builds with `open`, the way a user does, and so does every release run with the app from the packaged zip (`scripts/live-launch.sh`). For 10 seconds, once a second, it checks that Tonearm is running and that its main thread answers: `Tools/LaunchPing` sends Tonearm an Apple Event it has no handler for, and AppKit answers that on the main thread with "not handled". No answer within 5 seconds fails the launch, so a main thread that hangs at launch fails, not only a crash. It first asks macOS, without prompting, whether it may send the event at all, so a missing permission fails as such and does not look like a hang. Sparkle starts, but its automatic checks are off for the launch. Otherwise a branch older than the latest release would download that release from the real feed and replace the build in place, and the later steps would test the published app. The script also fails if the bundle changed. This catches a crash or a hung main thread in the first 10 seconds, including in Sparkle's start. On its own it would have passed v0.3.0, because the runner does not enforce library validation. It can't see a hang that starts later, or work done off the main thread.
 
 ### Update end to end: `scripts/update-e2e.sh`
 
-Runs in `update-e2e.yml` on pull requests that touch `scripts/`, `Resources/`, `Updater.swift` or the package, and in every release run before publishing. With a throwaway "Tonearm Self-Signed" certificate and an EdDSA key from Sparkle's `generate_keys`, it builds this commit twice: OLD as 0.0.1 (build 1) and NEW as the version in `Info.plist`, both reading a feed on 127.0.0.1. It packages NEW with `package.sh` and `appcast.sh`, serves it with `python3 -m http.server`, installs OLD in a temporary Applications folder and opens it. Nobody clicks anything: Sparkle checks on launch, downloads in the background, and `Updater.swift` installs at once because no Tonearm window is open. Then it does the same again with OLD built from the newest release tag below NEW, with that release's own scripts, so the updater code that runs is the one users have. That build gets the test feed and key and build 1 in its `Info.plist`, and is signed again with the throwaway certificate.
+Runs in `update-e2e.yml` on pull requests that touch `scripts/`, `Resources/`, `Sources/` or the package, and in every release run before publishing. Any app code counts because Sparkle installs only when no Tonearm window is open, so a window that opens by itself or stays open blocks updates. It is not a required check, since it does not run on every pull request. With a throwaway "Tonearm Self-Signed" certificate and an EdDSA key from Sparkle's `generate_keys`, it builds this commit twice: OLD as 0.0.1 (build 1) and NEW as the version in `Info.plist`, both reading a feed on 127.0.0.1. It packages NEW with `package.sh` and `appcast.sh`, serves it with `python3 -m http.server`, installs OLD in a temporary Applications folder and opens it. Nobody clicks anything: Sparkle checks on launch, downloads in the background, and `Updater.swift` installs at once because no Tonearm window is open. Then it does the same again with OLD built from the newest release tag below NEW, with that release's own scripts, so the updater code that runs is the one users have. That build gets the test feed and key and build 1 in its `Info.plist`, and is signed again with the throwaway certificate.
 
 It proves that, with a certificate that has no Team ID: Sparkle finds the item `appcast.sh` writes, downloads the zip `package.sh` makes, accepts its EdDSA signature and the new app's code signature, replaces the app and relaunches it; the new app's `CFBundleVersion` is NEW's, its signature verifies, it passes the launch gate and stays up 10 seconds. It also checks that `build-app.sh` refuses the test feed and key without `TONEARM_TEST_UPDATE=1`.
 
@@ -107,7 +130,9 @@ Step 9 of [Cut a release](#cut-a-release): download the DMG on a real Mac (so it
 
 ## Updates (Sparkle)
 
-Tonearm uses [Sparkle](https://sparkle-project.org) 2, its only dependency, pinned to an exact version in `Package.swift`. `scripts/sparkle-tools.sh` pins the same version and the SHA-256 of its tarball; update both together.
+Tonearm uses [Sparkle](https://sparkle-project.org) 2, its only dependency, pinned to an exact version in `Package.swift` and to a commit in `Package.resolved`. Sparkle's SwiftPM archive (`Sparkle-for-Swift-Package-Manager.zip`) holds its command line tools in `bin/` next to the framework, and SwiftPM checks the archive against the checksum in Sparkle's own `Package.swift` at the pinned commit. `scripts/sparkle-tools.sh` copies `sign_update` and `generate_keys` from there, so the tools always match the framework in the app.
+
+To bump Sparkle, merge Dependabot's weekly pull request, or change the version in `Package.swift` and run `swift package update`. Read Sparkle's release notes first. The pull request runs the release dry run and the update test, which sign and install an update with the new tools.
 
 How it works for users:
 
@@ -160,7 +185,7 @@ The script makes a 20-year RSA certificate with the common name `Tonearm Self-Si
 gh secret set SPARKLE_ED_PRIVATE_KEY -R Abulkosim/tonearm < path/to/sparkle-ed25519.key
 ```
 
-To make a new pair (see [Rotating keys](#rotating-keys) first):
+To make a new pair (see [Rotating keys](#rotating-keys) first; `sparkle-tools.sh` needs Xcode or the Command Line Tools):
 
 ```sh
 scripts/sparkle-tools.sh /tmp/sparkle
