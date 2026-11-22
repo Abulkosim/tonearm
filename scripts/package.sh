@@ -45,35 +45,56 @@ fi
 
 ditto -c -k --keepParent "$APP" "$ZIP"
 
-mkdir "$work/dmg"
+# hdiutil has failed on GitHub's runners with "create failed - Resource busy", and 40 ms
+# after a create with "verify failed - Resource temporarily unavailable" (CI runs
+# 44190267916 and 44192171935). Both mean another process had the image open: macOS scans
+# and indexes new disk images in the background (actions/runner-images#7522). So the image
+# is made in a folder Spotlight skips (.noindex) and moved to dist/ only once it verifies,
+# and every hdiutil call first waits until no process has the image open. If a call still
+# fails, the warning names the processes that had it open, and it is tried again.
+holders() { lsof -F c -- "$1" 2> /dev/null | sed -n 's/^c//p' | sort -u | paste -s -d ' ' - || true; }
+wait_unused() {
+  local who=""
+  [ -e "$1" ] || return 0
+  for _ in $(seq 1 60); do
+    who="$(holders "$1")"
+    [ -z "$who" ] && return 0
+    sleep 0.5
+  done
+  echo "::warning::package: $1 still open after 30 s, in: $who"
+}
+# hdi <image> <hdiutil arguments...>
+hdi() {
+  local image="$1" attempt
+  shift
+  for attempt in 1 2 3; do
+    wait_unused "$image"
+    if hdiutil "$@"; then
+      return 0
+    fi
+    echo "::warning::package: hdiutil $1 failed (attempt $attempt of 3); open in: $(holders "$image")"
+    [ "$attempt" -lt 3 ] || return 1
+    sleep 5
+  done
+}
+
+mkdir "$work/dmg" "$work/image.noindex"
 ditto "$APP" "$work/dmg/Tonearm.app"
 ln -s /Applications "$work/dmg/Applications"
-# hdiutil sometimes fails with "Resource busy" on CI runners; retry.
-for attempt in 1 2 3; do
-  if hdiutil create -volname Tonearm -srcfolder "$work/dmg" -ov -format UDZO "$DMG"; then
-    break
-  fi
-  [ "$attempt" -lt 3 ] || exit 1
-  sleep 5
-done
+image="$work/image.noindex/$(basename "$DMG")"
+hdi "$image" create -volname Tonearm -srcfolder "$work/dmg" -ov -format UDZO "$image"
 
 if [ "$developer_id" = true ]; then
-  codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
-  codesign --verify --verbose=2 "$DMG"
+  codesign --force --timestamp --sign "$SIGN_IDENTITY" "$image"
+  codesign --verify --verbose=2 "$image"
 fi
 if [ "$NOTARIZE" = true ]; then
-  scripts/notarize.sh "$DMG"
-  xcrun stapler staple "$DMG"
-  spctl -a -t open --context context:primary-signature -vv "$DMG"
+  scripts/notarize.sh "$image"
+  xcrun stapler staple "$image"
+  spctl -a -t open --context context:primary-signature -vv "$image"
 fi
-# verify hits the same "Resource temporarily unavailable" flake; retry it too.
-for attempt in 1 2 3; do
-  if hdiutil verify "$DMG"; then
-    break
-  fi
-  [ "$attempt" -lt 3 ] || exit 1
-  sleep 5
-done
+hdi "$image" verify "$image"
+mv "$image" "$DMG"
 
 cp "$ZIP" "$OUT/Tonearm.zip"
 cp "$DMG" "$OUT/Tonearm.dmg"
