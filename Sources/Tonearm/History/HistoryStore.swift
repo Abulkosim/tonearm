@@ -622,10 +622,14 @@ final class HistoryStore: @unchecked Sendable {
     /// index and the tracks page by page from all over the disk: 300 to 800 ms at 217k
     /// listens on CI, against 40 ms once the pages are cached. In order, the same read is a
     /// few long sequential ones. Live recording appends in time order, so it stays close.
+    ///
+    /// VACUUM needs free disk space of about twice the file and, in WAL mode, writes the new
+    /// copy into the WAL. If it fails half way, say on a full disk, the database stays as it
+    /// was, and the WAL is still emptied so that copy doesn't stay on disk.
     func compactNow() throws {
         let d = try db()
+        defer { _ = try? d.int("PRAGMA wal_checkpoint(TRUNCATE)") }
         try d.exec("VACUUM")
-        _ = try d.int("PRAGMA wal_checkpoint(TRUNCATE)")
     }
 
     // MARK: Export
