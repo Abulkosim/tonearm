@@ -63,7 +63,7 @@ CI also runs on every pull request: an ad-hoc build that is checked and launched
 
 - **Build and snapshot** (macos-15, required): `swift test`, the universal app build, the warnings gate, the launch gate, the live launch, the Liner Notes checks and renders, the state walk, and `package.sh`. It uploads the renders (`liner-notes`, `snapshots`, `states`) and the versioned DMG and zip (`Tonearm-app`), kept 7 days.
 - **Self-signed build** (macos-15, required): the release signing path with a throwaway certificate, the launch gate test and a live launch.
-- **Intel build** (macos-15-intel, not required): tests, build, launch gate and live launch with the x86_64 slice running natively. The other jobs run it only under Rosetta.
+- **Intel build** (macos-15-intel, not required): tests, build, the bundle checks of the launch gate and the live launch, with the x86_64 slice running natively. The other jobs run it only under Rosetta. The runner has no Metal device, so `--snapshot` aborts there and is skipped; real Intel Macs have one.
 - **Scripts and release notes** (Ubuntu, required): ShellCheck on every shell script, [actionlint](https://github.com/rhysd/actionlint) on every workflow (it runs ShellCheck on each `run:` block too), the SHA pin check, the CI gate's own test (`scripts/require-ci-test.sh`), and `check-release.sh` for the version in `Info.plist`.
 
 `e2e.yml` runs the fake-Spotify end-to-end test (required) and `update-e2e.yml` the update test, described below.

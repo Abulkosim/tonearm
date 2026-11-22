@@ -164,8 +164,10 @@ jobs:
         run: swift test
       - name: Build app
         run: scripts/build-app.sh
-      - name: Check app bundle and launch it
-        run: EXPECT_SIGNING=adhoc scripts/check-app.sh build/Tonearm.app
+      # The Intel runner has no Metal device, so the offscreen renders of --snapshot abort
+      # there ("Target device architecture is nil", run 45037301149). Real Intel Macs have one.
+      - name: Check app bundle
+        run: EXPECT_SIGNING=adhoc SKIP_LAUNCH=1 scripts/check-app.sh build/Tonearm.app
       - name: Live launch
         run: scripts/live-launch.sh build/Tonearm.app
 
